@@ -162,7 +162,7 @@ function railCar(len, kind, color, lead) {
 
 function train(color, kind) {
   const g = new THREE.Group();
-  const cars = kind === 'tram' ? [[9, true], [7.5, false], [9, false]] : kind === 'subway' ? [[15, true], [15, false]] : [[19, true], [17, false]];
+  const cars = [[kind === 'tram' ? 14 : kind === 'subway' ? 16 : 19, true]]; // one car is enough to read as a train
   const gap = kind === 'tram' ? 0.15 : 0.6;
   const total = cars.reduce((s, [l]) => s + l, 0) + gap * (cars.length - 1);
   let z = -total / 2;
@@ -244,7 +244,7 @@ function ferry(color) {
 }
 
 // Each model is scaled so its length fills a similar part of the canvas.
-const FIT = { car: 3.6, bus: 4.4, subway: 4.0, train: 4.2, tram: 3.2, flight: 5.0, ferry: 4.6 };
+const FIT = { car: 3.6, bus: 4.4, subway: 2.8, train: 3.0, tram: 2.6, flight: 5.0, ferry: 4.6 };
 function build(kind, color, lineColor) {
   const make = { car: () => car(color), bus: () => bus(color), flight: () => plane(color), ferry: () => ferry(color) }[kind]
     || (() => train(lineColor || color, kind));
