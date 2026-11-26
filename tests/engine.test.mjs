@@ -17,7 +17,7 @@ const deps = {
   loadCities: async () => cities,
   loadLand: async () => land,
 };
-const person = (name, lng, lat, mode = 'transit') => ({ name, pos: [lng, lat], mode });
+const person = (name, lng, lat) => ({ name, pos: [lng, lat] });
 
 test('fairness modes match the worked example', () => {
   const c = [
@@ -106,7 +106,7 @@ test('Europe: ground and flights mix', async () => {
     person('London', -0.1276, 51.5072),
     person('Berlin', 13.405, 52.52),
     person('Madrid', -3.7038, 40.4168),
-    person('Rome', 12.4964, 41.9028, 'car'),
+    person('Rome', 12.4964, 41.9028),
   ];
   const plan = await buildPlan(people, deps);
   const w = plan.ranked.minimax[0];
@@ -120,4 +120,27 @@ test('Across the antimeridian (Seoul, LA, Sydney)', async () => {
   const w = plan.ranked.minimax[0];
   console.log(`  pacific minimax ${w.name}, ${w.country} ${w.times.map((t) => (t / 60).toFixed(1)).join('/')} h`);
   assert.ok(Number.isFinite(w.stats.max));
+});
+
+test('Allowed travel modes are respected', async () => {
+  const europe = [person('London', -0.1276, 51.5072), person('Berlin', 13.405, 52.52), person('Madrid', -3.7038, 40.4168)];
+  const used = async (people, modes) => {
+    const plan = await buildPlan(people, deps, () => {}, modes);
+    const w = plan.ranked.minimax[0];
+    const set = new Set(plan.journeyFor(w).flat().map((l) => l.mode));
+    console.log(`  ${modes.join('+') || 'walk'}: ${w.name} ${(w.stats.max / 60).toFixed(1)} h max, legs ${[...set].join(', ')}`);
+    return { set, w };
+  };
+  const train = await used(europe, ['train']);
+  assert.ok(!train.set.has('flight') && !train.set.has('bus') && !train.set.has('car'));
+  const fly = await used(europe, ['flight']);
+  assert.ok(fly.set.has('flight'));
+  assert.ok(!fly.set.has('train') && !fly.set.has('bus'));
+  const car = await used(europe, ['car']);
+  assert.deepEqual([...car.set].filter((m) => m !== 'ferry'), ['car']);
+  const seoul = [person('Gangnam', 127.0276, 37.4979), person('Hongdae', 126.9237, 37.5563)];
+  const walk = await used(seoul, []);
+  assert.deepEqual([...walk.set], ['walk']);
+  const sub = await used(seoul, ['train']);
+  assert.ok(!sub.set.has('bus') && [...sub.set].some((m) => m === 'subway' || m === 'train'));
 });

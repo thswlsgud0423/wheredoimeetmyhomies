@@ -3,7 +3,7 @@
 import { haversine } from '../geo.js';
 import { makeGrid, rasterizeLand } from './grid.js';
 import { buildNetwork } from './network.js';
-import { solve, reconstruct, profileFor } from './solver.js';
+import { solve, reconstruct, profileFor, DEFAULT_MODES } from './solver.js';
 import { rank, stats } from './fairness.js';
 
 export const TIERS = {
@@ -47,10 +47,11 @@ export function areaFor(people, tier) {
 }
 
 /**
- * people: [{ id, name, color, pos: [lng, lat], mode: 'transit'|'car'|'walk' }]
+ * people: [{ id, name, color, pos: [lng, lat] }]
  * deps: { loadRail(bbox), loadAirports(), loadCities(), loadLand() } (async, may return null)
+ * modes: how the group may travel, any of 'train', 'bus', 'flight', 'car' (walking is always allowed)
  */
-export async function buildPlan(people, deps, onStage = () => {}) {
+export async function buildPlan(people, deps, onStage = () => {}, modes = DEFAULT_MODES) {
   const tier = chooseTier(people);
   const T = TIERS[tier];
   const bbox = areaFor(people, tier);
@@ -59,10 +60,10 @@ export async function buildPlan(people, deps, onStage = () => {}) {
   const grid = makeGrid(bbox, T.cells);
   const notes = [];
   let lines = [];
-  if (tier === 'city' && people.some((p) => p.mode === 'transit')) {
+  if (tier === 'city' && modes.includes('train')) {
     onStage('rail');
     try { lines = (await deps.loadRail(grid.bbox)) || []; }
-    catch (err) { notes.push(`Rail data unavailable (${err.message}); public transport uses an average bus speed.`); }
+    catch (err) { notes.push(`Rail data unavailable (${err.message}), so trains could not be used here.`); }
   }
   let airports = [];
   if (tier !== 'city') {
@@ -73,15 +74,16 @@ export async function buildPlan(people, deps, onStage = () => {}) {
   }
   const net = buildNetwork(grid, { lines, airports });
   const hasRail = net.S > 0;
-  if (tier === 'city' && !hasRail && people.some((p) => p.mode === 'transit') && !notes.length)
-    notes.push('No rail lines found here; public transport uses an average bus speed.');
+  if (tier === 'city' && !hasRail && modes.includes('train') && !notes.length)
+    notes.push('No rail lines found here, so trains could not be used.');
+  if (tier !== 'city' && modes.includes('flight') && !airports.length) notes.push('No airport data, so flights could not be used.');
 
   // --- one search per person ---
   const runs = [];
+  const profile = profileFor(modes, tier, hasRail);
   for (let i = 0; i < people.length; i++) {
     onStage('solve', { i, n: people.length });
     await tick();
-    const profile = profileFor(people[i].mode, tier, hasRail);
     runs.push({ profile, ...solve(net, people[i].pos, profile, T.cap) });
   }
 
@@ -111,7 +113,7 @@ export async function buildPlan(people, deps, onStage = () => {}) {
     return journeys.get(cand.id);
   };
 
-  return { tier, tierLabel: T.label, bbox, grid, net, runs, maxField, cands, ranked, notes, journeyFor, people };
+  return { tier, tierLabel: T.label, bbox, grid, net, runs, maxField, cands, ranked, notes, journeyFor, people, modes };
 }
 
 async function candidatesFor(tier, net, deps) {

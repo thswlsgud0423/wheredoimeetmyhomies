@@ -35,7 +35,7 @@ export function createResults(root, h) {
     const c = chosen[mode];
     if (!c) {
       root.innerHTML = `<button class="link back">${UI.back} Friends</button>
-        <div class="card"><h2>No place works for everyone</h2><p class="hint">In this model nobody can reach a common place. Try public transport or a car instead of walking.</p></div>`;
+        <div class="card"><h2>No place works for everyone</h2><p class="hint">With these ways to travel, nobody can reach a common place in time. Go back and allow more options, like flights between countries or trains between cities.</p></div>`;
       return;
     }
     const agree = ['equal', 'minimax', 'efficient'].every((m) => chosen[m]?.id === c.id);

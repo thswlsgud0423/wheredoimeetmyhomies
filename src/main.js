@@ -6,6 +6,7 @@ import {
 import { makeIsoBuilder } from './map/iso.js';
 import { createJourney, prepareLegs } from './map/journey.js';
 import { buildPlan } from './engine/plan.js';
+import { DEFAULT_MODES } from './engine/solver.js';
 import { routeTree } from './engine/tree.js';
 import { MODES } from './engine/fairness.js';
 import { deps, locate, reverseName } from './data/load.js';
@@ -20,7 +21,8 @@ const $ = (s) => document.querySelector(s);
 // ---------- state ----------
 const state = {
   mode: 'equal',
-  people: SAMPLES.wien.people.map(([name, place, lng, lat], k) => ({ id: k, name, place, pos: [lng, lat], mode: 'transit', color: COLORS[k] })),
+  modes: [...DEFAULT_MODES],
+  people: SAMPLES.wien.people.map(([name, place, lng, lat], k) => ({ id: k, name, place, pos: [lng, lat], color: COLORS[k] })),
 };
 let plan = null;
 let markers = [];
@@ -155,7 +157,7 @@ async function find() {
       if (stage === 'rail') toast('Loading rail lines from OpenStreetMap…', 15000);
       if (stage === 'land') toast('Loading coastlines and airports…');
       if (stage === 'solve') toast(`Calculating travel times · ${esc(people[info.i].name)} (${info.i + 1}/${info.n})`);
-    });
+    }, [...state.modes]);
   } catch (err) {
     toast(`Something went wrong: ${esc(err.message)}`, 6000);
     return;
@@ -171,7 +173,7 @@ async function find() {
   const best = chosen[state.mode] || chosen.minimax;
   prefs = defaultPrefs();
   if (!best) {
-    toast('No place everyone can reach. Try a different way to travel.', 6000);
+    toast('No place everyone can reach this way. Allow more ways to travel.', 6000);
     showResults(chosen);
     return;
   }

@@ -5,18 +5,30 @@ import { haversine } from '../geo.js';
 // Edge types stored in `via` for path reconstruction.
 export const E = { START: 0, GROUND: 1, BOARD: 2, RIDE: 3, ALIGHT: 4, TO_AIRPORT: 5, FLIGHT: 6, FROM_AIRPORT: 7 };
 
-// How a person moves, per map scale. Speeds are door-to-door averages (km/h).
-export function profileFor(mode, tier, hasRail) {
+// Ways of travelling the group can allow (any combination). Walking to stops is always included;
+// with none selected, everyone walks.
+export const TRAVEL_MODES = ['train', 'bus', 'flight', 'car'];
+export const DEFAULT_MODES = ['train', 'bus', 'flight'];
+
+// How everyone moves, per map scale. Speeds are door-to-door averages (km/h).
+// `ground` says how ground legs are labelled (see labelGround).
+export function profileFor(modes, tier, hasRail) {
+  const has = (m) => modes.includes(m);
   const city = tier === 'city';
-  if (mode === 'walk') return { mode, land: 4.8, water: 0, detour: 1.25, rail: false, flights: false };
-  if (mode === 'car') return { mode, land: city ? 24 : 80, water: city ? 0 : 22, detour: 1.3, rail: false, flights: !city };
-  // public transport
+  const rail = city && has('train') && hasRail;
+  const flights = !city && has('flight');
+  if (has('car')) return { mode: 'car', land: city ? 24 : 80, water: city ? 0 : 22, detour: 1.3, rail, flights, ground: 'car' };
   if (city) {
-    return hasRail
-      ? { mode, land: 4.8, water: 0, detour: 1.25, rail: true, flights: false }
-      : { mode, land: 13, water: 0, detour: 1.3, rail: false, flights: false, busOnly: true };
+    if (has('bus')) return { mode: 'bus', land: 9, water: 0, detour: 1.3, rail, flights: false, ground: rail ? 'walk+bus' : 'bus' };
+    return { mode: 'walk', land: 4.8, water: 0, detour: 1.25, rail, flights: false, ground: 'walk' };
   }
-  return { mode, land: 75, water: 22, detour: 1.25, rail: false, flights: true };
+  // between cities / across countries (ferries cross water when going by land)
+  if (has('train') || has('bus')) {
+    const both = has('train') && has('bus');
+    return { mode: 'land', land: has('train') ? 75 : 55, water: 22, detour: 1.25, rail: false, flights, ground: both ? 'bus+train' : has('train') ? 'train' : 'bus' };
+  }
+  if (flights) return { mode: 'fly', land: 45, water: 0, detour: 1.3, rail: false, flights, ground: 'taxi' };
+  return { mode: 'walk', land: 4.8, water: 0, detour: 1.25, rail: false, flights: false, ground: 'walk' };
 }
 
 class Heap {
@@ -214,10 +226,7 @@ function stopLabel(net, s) {
   return net.stops.nameEn[s] ? `${net.stops.name[s]} (${net.stops.nameEn[s]})` : net.stops.name[s];
 }
 
-function groundMode(profile) {
-  if (profile.mode === 'walk') return 'walk';
-  if (profile.mode === 'car') return 'car';
-  if (profile.busOnly) return 'bus';
+function groundMode() {
   return 'ground';
 }
 
@@ -225,14 +234,21 @@ function railMode(line) {
   return line.route === 'train' ? 'train' : line.route === 'tram' ? 'tram' : 'subway';
 }
 
-// Public-transport ground legs: walk if short, otherwise bus or train by distance.
+// Ground legs get a vehicle from the allowed modes and their length: short hops are walks.
 function labelGround(leg, profile, tier) {
   if (leg.mode !== 'ground') return leg;
   let m = 0;
   for (let i = 1; i < leg.coords.length; i++) m += haversine(leg.coords[i - 1], leg.coords[i]);
   leg.meters = m;
-  if (tier === 'city' || m < 2500) leg.mode = 'walk';
-  else if (m < 60000) leg.mode = 'bus';
-  else leg.mode = 'train';
+  const city = tier === 'city';
+  const walkMax = city ? 800 : 2500;
+  switch (profile.ground) {
+    case 'car': leg.mode = 'car'; break;
+    case 'walk': leg.mode = 'walk'; break;
+    case 'taxi': leg.mode = m < walkMax ? 'walk' : 'car'; break;
+    case 'train': leg.mode = m < walkMax ? 'walk' : 'train'; break;
+    case 'bus+train': leg.mode = m < walkMax ? 'walk' : m < 60000 ? 'bus' : 'train'; break;
+    default: leg.mode = m < walkMax ? 'walk' : 'bus'; // 'bus', 'walk+bus'
+  }
   return leg;
 }

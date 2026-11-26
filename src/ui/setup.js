@@ -6,10 +6,12 @@ import { ICONS, UI } from '../map/icons.js';
 // Apple system colors (blue is kept for the meeting place / accent).
 export const COLORS = ['#ff9500', '#34c759', '#af52de', '#ff2d55', '#30b0c7', '#5856d6', '#ff3b30', '#e6b800', '#a2845e', '#00c7be', '#8e8e93'];
 export const MAX_FRIENDS = 10;
+// How the group may travel: any combination. Walking to stops is always included.
 const TRAVEL = [
-  { key: 'transit', icon: ICONS.subway, label: 'Public transport' },
+  { key: 'train', icon: ICONS.train, label: 'Train & subway' },
+  { key: 'bus', icon: ICONS.bus, label: 'Bus' },
+  { key: 'flight', icon: ICONS.flight, label: 'Flight' },
   { key: 'car', icon: ICONS.car, label: 'Car' },
-  { key: 'walk', icon: ICONS.walk, label: 'Walk' },
 ];
 
 export const SAMPLES = {
@@ -63,6 +65,14 @@ export const SAMPLES = {
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
+function travelHint(modes) {
+  if (!modes.length) return 'Walking only. Pick one or more to combine them.';
+  const names = { train: 'trains', bus: 'buses', flight: 'flights', car: 'driving' };
+  const list = modes.map((m) => names[m]);
+  const text = list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}` : list[0];
+  return `Everyone uses ${text}${modes.includes('car') ? '' : ', plus walking to stops'}. Flights only count between cities.`;
+}
+
 export function createSetup(root, { state, onChange, onFind, onPickOnMap, getBias }) {
   function render() {
     const friends = state.people.length - 1;
@@ -79,9 +89,6 @@ export function createSetup(root, { state, onChange, onFind, onPickOnMap, getBia
             <div class="person-main">
               <div class="person-top">
                 <input class="name" value="${esc(p.name)}" maxlength="16" aria-label="Name" />
-                <div class="seg small" role="group" aria-label="How ${esc(p.name)} travels">
-                  ${TRAVEL.map((t) => `<button class="${p.mode === t.key ? 'on' : ''}" data-mode="${t.key}" title="${t.label}" aria-label="${t.label}">${t.icon}</button>`).join('')}
-                </div>
               </div>
               <div class="where">
                 <input class="place" placeholder="Search a place or address" value="${esc(p.place || '')}" autocomplete="off" aria-label="Where ${esc(p.name)} starts" />
@@ -93,6 +100,12 @@ export function createSetup(root, { state, onChange, onFind, onPickOnMap, getBia
           </li>`).join('')}
       </ul>
       <button class="link add" ${friends >= MAX_FRIENDS ? 'disabled' : ''}>Add a friend <span class="hint">${friends}/${MAX_FRIENDS}</span></button>
+
+      <div class="group-head"><h2>How does everyone travel?</h2></div>
+      <div class="travel" role="group" aria-label="Allowed ways to travel">
+        ${TRAVEL.map((t) => `<button class="travel-opt ${state.modes.includes(t.key) ? 'on' : ''}" data-travel="${t.key}" aria-pressed="${state.modes.includes(t.key)}">${t.icon}<span>${t.label}</span></button>`).join('')}
+      </div>
+      <p class="hint small">${travelHint(state.modes)}</p>
 
       <div class="group-head"><h2>What counts as fair?</h2></div>
       <div class="seg wide">
@@ -112,14 +125,18 @@ export function createSetup(root, { state, onChange, onFind, onPickOnMap, getBia
     const i = li ? +li.dataset.i : -1;
     if (t.dataset.sample) {
       const s = SAMPLES[t.dataset.sample];
-      state.people = s.people.map(([name, place, lng, lat], k) => ({ id: k, name, place, pos: [lng, lat], mode: 'transit', color: COLORS[k] }));
+      state.people = s.people.map(([name, place, lng, lat], k) => ({ id: k, name, place, pos: [lng, lat], color: COLORS[k] }));
       render(); onChange(); return;
     }
-    if (t.dataset.mode) { state.people[i].mode = t.dataset.mode; render(); onChange(); return; }
+    if (t.dataset.travel) {
+      const k = t.dataset.travel, m = state.modes;
+      m.includes(k) ? m.splice(m.indexOf(k), 1) : m.push(k);
+      render(); return;
+    }
     if (t.classList.contains('remove')) { state.people.splice(i, 1); recolor(); render(); onChange(); return; }
     if (t.classList.contains('add')) {
       const k = state.people.length;
-      state.people.push({ id: Date.now(), name: `Friend ${k}`, place: '', pos: null, mode: 'transit', color: COLORS[k] });
+      state.people.push({ id: Date.now(), name: `Friend ${k}`, place: '', pos: null, color: COLORS[k] });
       render(); onChange();
       root.querySelector(`.person[data-i="${k}"] .place`)?.focus();
       return;
