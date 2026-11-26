@@ -2,7 +2,7 @@
 import { along, sliceAlong, greatCircle, smooth } from '../geo.js';
 import { setData, maplibregl } from './scene.js';
 import { ICONS } from './icons.js';
-import { createToys } from './toys.js';
+import { createToys, ON_FOOT } from './toys.js';
 
 export const MODE_ICON = ICONS;
 export const MODE_NAME = {
@@ -51,10 +51,11 @@ export function createJourney(map, people, legsPer, { sameArrival = false } = {}
     const el = document.createElement('div');
     el.className = 'traveler';
     el.style.setProperty('--c', p.color);
-    el.innerHTML = '<canvas class="toy"></canvas><span class="traveler-tag"></span>';
+    el.innerHTML = '<canvas class="toy"></canvas><span class="foot-pin"><b></b></span><span class="traveler-tag"></span>';
     const canvas = el.querySelector('canvas');
     canvas.width = canvas.height = toys.size;
     el.querySelector('.traveler-tag').textContent = p.name;
+    el.querySelector('.foot-pin b').textContent = p.name.slice(0, 1).toUpperCase();
     handles.push(toys.add(p.color, canvas));
     return new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat(p.pos).addTo(map);
   });
@@ -96,10 +97,11 @@ export function createJourney(map, people, legsPer, { sameArrival = false } = {}
       const kind = s.done ? 'done' : s.mode === 'wait' ? 'wait' : MODE_NAME[s.mode] ? s.mode : 'walk';
       handles[i].set({ kind, heading: s.heading, lineColor: s.leg?.line?.colour || '' });
       el.classList.toggle('done', s.done);
-      // friends who made it stand in a little circle around the pin instead of on top of each other
-      const a = (i / people.length) * Math.PI * 2 + 0.4;
-      m.setOffset(s.done ? [Math.cos(a) * 40, Math.sin(a) * 26 + 6] : [0, 0]);
-      el.classList.toggle('flying', kind === 'flight');
+      el.classList.toggle('on-foot', ON_FOOT.has(kind));
+      el.classList.toggle('walking', kind === 'walk');
+      // friends who made it gather in a small ring around the meeting pin instead of on top of each other
+      const a = (i / people.length) * Math.PI * 2 - Math.PI / 2;
+      m.setOffset(s.done ? [Math.cos(a) * 34, Math.sin(a) * 22 + 10] : [0, 0]);
       for (const c of s.trail) if (c.length > 1) features.push({ type: 'Feature', properties: { color: p.color }, geometry: { type: 'LineString', coordinates: c } });
       return s;
     });

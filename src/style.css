@@ -198,10 +198,20 @@ body:has(#plans:not([hidden])) #player, body:has(#plans:not([hidden])) #hud { ri
 .pin-head { width: 34px; height: 34px; border-radius: 50%; background: var(--accent); border: 3px solid #fff; display: grid; place-items: center; box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3); }
 .pin-stem { width: 3px; height: 12px; background: #fff; box-shadow: 0 2px 3px rgba(0, 0, 0, 0.2); border-radius: 0 0 2px 2px; }
 .pin-label { position: absolute; top: 52px; font-weight: 700; font-size: 13px; white-space: nowrap; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 4px #fff; }
-.traveler { display: flex; flex-direction: column; align-items: center; pointer-events: none; }
-.toy { width: 88px; height: 88px; display: block; filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.12)); }
-.traveler-tag { position: absolute; top: 70px; font-size: 11px; font-weight: 700; white-space: nowrap; color: #fff; background: var(--c);
-  border-radius: 999px; padding: 1px 7px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); }
+.traveler { position: relative; width: 96px; height: 96px; pointer-events: none; }
+.toy { width: 96px; height: 96px; display: block; }
+.traveler.on-foot .toy { visibility: hidden; }
+.traveler-tag { position: absolute; left: 50%; top: calc(50% + 26px); transform: translateX(-50%); font-size: 11px; font-weight: 600; white-space: nowrap;
+  color: var(--text); text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; }
+.traveler.on-foot .traveler-tag { top: calc(50% + 4px); }
+/* on foot: a plain map pin whose tip sits on the position */
+.foot-pin { display: none; position: absolute; left: 50%; bottom: 50%; width: 26px; height: 26px; margin-left: -13px; margin-bottom: 4px;
+  background: var(--c); border: 2px solid #fff; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); box-shadow: -1px 2px 5px rgba(0, 0, 0, 0.3); }
+.foot-pin b { display: grid; place-items: center; width: 100%; height: 100%; transform: rotate(45deg); color: #fff; font-size: 11px; font-weight: 700; }
+.foot-pin::after { content: ''; position: absolute; left: -3px; bottom: -3px; width: 6px; height: 6px; border-radius: 50%; background: rgba(0, 0, 0, 0.25); transform: rotate(45deg); }
+.traveler.on-foot .foot-pin { display: block; }
+.traveler.walking .foot-pin { animation: step 0.5s ease-in-out infinite alternate; }
+@keyframes step { to { margin-bottom: 7px; } }
 
 /* similar options on the map and in the bottom bar */
 .opt-pin { display: flex; align-items: center; gap: 4px; background: #fff; border-radius: 999px; padding: 3px 8px 3px 3px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);

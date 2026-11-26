@@ -1,224 +1,220 @@
-// Cute little 3D travelers: a walking person, car, bus, subway/train/tram, plane and ferry.
-// One shared three.js renderer draws every traveler into its own small canvas, so they work
-// as ordinary map markers (also on the globe). The camera follows the map's pitch and bearing.
+// Small realistic 3D vehicles for travelers: car, city bus, subway / S-Bahn / train, tram, airliner, ferry.
+// (People on foot are shown as a simple map pin, not a 3D model.)
+// One shared three.js renderer draws every vehicle into its own small canvas, so they work as
+// ordinary map markers (also on the globe). The camera follows the map's pitch and bearing.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
-const PX = 160; // drawing size of each traveler canvas (CSS size is set in style.css)
+const PX = 176; // drawing size of each canvas (CSS size is set in style.css)
 const R = Math.PI / 180;
+export const ON_FOOT = new Set(['walk', 'wait', 'done']);
 
-let renderer = null;
+let renderer = null, envMap = null;
 function getRenderer() {
   if (renderer) return renderer;
   renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(1);
   renderer.setSize(PX, PX, false);
   renderer.setClearColor(0x000000, 0);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  envMap = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   return renderer;
 }
 
-const steps = new THREE.DataTexture(new Uint8Array([110, 190, 255]), 3, 1, THREE.RedFormat);
-steps.minFilter = steps.magFilter = THREE.NearestFilter;
-steps.needsUpdate = true;
-const mats = new Map();
-const toon = (hex) => {
-  const key = String(hex);
-  if (!mats.has(key)) mats.set(key, new THREE.MeshToonMaterial({ color: new THREE.Color(hex), gradientMap: steps }));
-  return mats.get(key);
-};
-const flat = (hex, opacity = 1) => new THREE.MeshBasicMaterial({ color: hex, transparent: opacity < 1, opacity, depthWrite: opacity === 1 });
+// ---------- materials ----------
+const cache = new Map();
+const memo = (key, make) => { if (!cache.has(key)) cache.set(key, make()); return cache.get(key); };
+const paint = (hex) => memo('paint' + hex, () => new THREE.MeshStandardMaterial({ color: hex, metalness: 0.35, roughness: 0.32 }));
+const satin = (hex) => memo('satin' + hex, () => new THREE.MeshStandardMaterial({ color: hex, metalness: 0.1, roughness: 0.55 }));
+const metal = (hex = '#c9ccd1') => memo('metal' + hex, () => new THREE.MeshStandardMaterial({ color: hex, metalness: 0.85, roughness: 0.28 }));
+const GLASS = new THREE.MeshStandardMaterial({ color: '#1b2430', metalness: 0.7, roughness: 0.08 });
+const RUBBER = new THREE.MeshStandardMaterial({ color: '#1d1d1f', metalness: 0, roughness: 0.9 });
+const DARK = new THREE.MeshStandardMaterial({ color: '#3a3a3c', metalness: 0.2, roughness: 0.7 });
+const lamp = (hex) => memo('lamp' + hex, () => new THREE.MeshStandardMaterial({ color: hex, emissive: hex, emissiveIntensity: 0.6, roughness: 0.3 }));
 
 const mesh = (geo, mat, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); return m; };
-const box = (w, h, d, r = 0.12) => new RoundedBoxGeometry(w, h, d, 3, Math.min(r, w / 2, h / 2, d / 2));
-const ball = (r) => new THREE.SphereGeometry(r, 20, 14);
-const cyl = (r, h) => new THREE.CylinderGeometry(r, r, h, 18);
-const pill = (r, len) => new THREE.CapsuleGeometry(r, len, 6, 16);
+const rbox = (w, h, d, r = 0.1) => new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2 - 1e-3, h / 2 - 1e-3, d / 2 - 1e-3));
 
-const SKIN = '#ffd9bd', HAIR = '#4b3527', GLASS = '#bfe4ff', DARK = '#2b2b30', WHITE = '#fbfbfd', BLUSH = '#ff9aa8';
-const shade = (hex, k) => '#' + new THREE.Color(hex).multiplyScalar(k).getHexString();
-
-// a pair of shiny eyes facing -Z (forward)
-function face(g, { y, z, gap = 0.16, r = 0.065, cheeks = true }) {
-  for (const s of [-1, 1]) {
-    g.add(mesh(ball(r), flat(DARK), s * gap, y, z));
-    g.add(mesh(ball(r * 0.35), flat('#ffffff'), s * gap - 0.02, y + r * 0.35, z - r * 0.8));
-    if (cheeks) {
-      const c = mesh(ball(r * 1.1), flat(BLUSH, 0.75), s * (gap + 0.13), y - r * 1.4, z + 0.03);
-      c.scale.z = 0.4; g.add(c);
-    }
-  }
+// Side silhouette (pts: [forward, up] with forward > 0 toward the front) extruded across the width.
+function profile(pts, width, bevel = 0.06) {
+  const s = new THREE.Shape();
+  pts.forEach(([x, y], i) => (i ? s.lineTo(x, y) : s.moveTo(x, y)));
+  s.closePath();
+  const g = new THREE.ExtrudeGeometry(s, { depth: width - bevel * 2, bevelEnabled: true, bevelSize: bevel, bevelThickness: bevel, bevelSegments: 3, curveSegments: 8 });
+  g.translate(0, 0, -(width - bevel * 2) / 2);
+  g.rotateY(Math.PI / 2); // shape x -> -z (forward)
+  return g;
+}
+// Flat outline in plan view (pts: [right, forward]) with a thickness, lying on the ground plane.
+function plan(pts, thick) {
+  const s = new THREE.Shape();
+  pts.forEach(([x, y], i) => (i ? s.lineTo(x, y) : s.moveTo(x, y)));
+  s.closePath();
+  const g = new THREE.ExtrudeGeometry(s, { depth: thick, bevelEnabled: false });
+  g.rotateX(-Math.PI / 2); // shape y -> -z (forward), depth -> up
+  g.translate(0, -thick / 2, 0);
+  return g;
 }
 
-function shadow(w, d) {
-  const m = mesh(new THREE.CircleGeometry(0.5, 28), flat('#000000', 0.16), 0, 0.01, 0);
+function wheel(r, w) {
+  const g = new THREE.Group();
+  const tire = mesh(new THREE.CylinderGeometry(r, r, w, 24), RUBBER);
+  const rim = mesh(new THREE.CylinderGeometry(r * 0.62, r * 0.62, w + 0.02, 20), metal('#b8bcc2'));
+  tire.rotation.z = rim.rotation.z = Math.PI / 2;
+  g.add(tire, rim);
+  return g;
+}
+
+// soft contact shadow
+const shadowTex = (() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const x = c.getContext('2d');
+  const gr = x.createRadialGradient(32, 32, 4, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(0,0,0,0.45)');
+  gr.addColorStop(1, 'rgba(0,0,0,0)');
+  x.fillStyle = gr; x.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+})();
+function shadow(w, d, y = 0.01) {
+  const m = mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false }), 0, y, 0);
   m.rotation.x = -Math.PI / 2;
   m.scale.set(w, d, 1);
   return m;
 }
 
-// ---------- models (forward is -Z, ground is y = 0) ----------
-function person(color) {
-  const g = new THREE.Group();
-  const body = new THREE.Group();
-  g.add(shadow(1.1, 1.0), body);
-  body.add(mesh(pill(0.34, 0.32), toon(color), 0, 0.86, 0));
-  const head = new THREE.Group();
-  head.position.y = 1.58;
-  head.add(mesh(ball(0.46), toon(SKIN)));
-  const hair = mesh(new THREE.SphereGeometry(0.48, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.52), toon(HAIR));
-  hair.rotation.x = 0.35; hair.position.set(0, 0.02, 0.04);
-  head.add(hair);
-  face(head, { y: -0.04, z: -0.42, gap: 0.15, r: 0.06 });
-  body.add(head);
-  body.add(mesh(box(0.46, 0.5, 0.26, 0.1), toon(shade(color, 0.75)), 0, 0.92, 0.36)); // backpack
-  const limb = (x, y, len, mat) => {
-    const pivot = new THREE.Group();
-    pivot.position.set(x, y, 0);
-    pivot.add(mesh(pill(0.11, len), mat, 0, -len / 2 - 0.06, 0));
-    body.add(pivot);
-    return pivot;
-  };
-  const legL = limb(-0.15, 0.55, 0.26, toon(DARK)), legR = limb(0.15, 0.55, 0.26, toon(DARK));
-  const armL = limb(-0.42, 1.08, 0.3, toon(color)), armR = limb(0.42, 1.08, 0.3, toon(color));
-  g.userData.anim = (t, kind) => {
-    if (kind === 'done') { // happy jump + waving
-      const j = Math.abs(Math.sin(t * 6));
-      body.position.y = j * 0.35;
-      armL.rotation.z = -2.5 + Math.sin(t * 12) * 0.3; armR.rotation.z = 2.5 - Math.sin(t * 12 + 1) * 0.3;
-      armL.rotation.x = armR.rotation.x = 0;
-      legL.rotation.x = legR.rotation.x = j * 0.3;
-      head.rotation.y = 0;
-      return;
-    }
-    if (kind === 'wait') { // idle, looking around
-      body.position.y = Math.sin(t * 2.5) * 0.02;
-      head.rotation.y = Math.sin(t * 1.3) * 0.6;
-      armL.rotation.set(0, 0, -0.15); armR.rotation.set(0, 0, 0.15);
-      legL.rotation.x = legR.rotation.x = 0;
-      return;
-    }
-    const s = Math.sin(t * 11);
-    body.position.y = Math.abs(Math.cos(t * 11)) * 0.08;
-    legL.rotation.x = s * 0.7; legR.rotation.x = -s * 0.7;
-    armL.rotation.set(-s * 0.7, 0, -0.12); armR.rotation.set(s * 0.7, 0, 0.12);
-    head.rotation.y = 0;
-  };
-  g.scale.setScalar(1.5);
-  return g;
-}
-
-function wheels(g, xs, zs, r = 0.26) {
-  const list = [];
-  for (const x of xs) for (const z of zs) {
-    const w = mesh(cyl(r, 0.2), toon(DARK), x, r, z);
-    w.rotation.z = Math.PI / 2;
-    const hub = mesh(cyl(r * 0.45, 0.22), toon('#d9d9de'), 0, 0, 0);
-    w.add(hub);
-    g.add(w); list.push(w);
-  }
-  return list;
-}
-
+// ---------- models: real proportions in meters, forward is -Z ----------
 function car(color) {
   const g = new THREE.Group();
-  const body = new THREE.Group();
-  g.add(shadow(1.7, 2.6), body);
-  body.add(mesh(box(1.3, 0.55, 2.3, 0.25), toon(color), 0, 0.55, 0));
-  body.add(mesh(box(1.08, 0.52, 1.2, 0.22), toon(GLASS), 0, 1.02, 0.12));
-  body.add(mesh(box(1.12, 0.12, 1.18, 0.06), toon(color), 0, 1.3, 0.12));
-  for (const s of [-1, 1]) { // headlight eyes
-    body.add(mesh(ball(0.15), flat('#ffffff'), s * 0.36, 0.66, -1.12));
-    body.add(mesh(ball(0.08), flat(DARK), s * 0.36, 0.68, -1.24));
-    body.add(mesh(ball(0.09), flat(BLUSH, 0.8), s * 0.55, 0.5, -1.13));
+  const L = 4.5, W = 1.8;
+  g.add(shadow(W * 1.5, L * 1.15));
+  // lower body: bumper, hood, beltline, trunk
+  g.add(mesh(profile([[2.25, 0.32], [2.3, 0.62], [2.05, 0.82], [0.95, 0.95], [-1.5, 0.98], [-2.2, 0.92], [-2.27, 0.55], [-2.2, 0.3]], W, 0.1), paint(color), 0, 0, 0));
+  // greenhouse (glass) and roof
+  g.add(mesh(profile([[0.95, 0.94], [0.05, 1.38], [-1.0, 1.38], [-1.65, 0.96]], W - 0.16, 0.05), GLASS));
+  g.add(mesh(profile([[0.12, 1.36], [-0.98, 1.36], [-1.05, 1.42], [0.05, 1.42]], W - 0.2, 0.04), paint(color)));
+  for (const s of [-1, 1]) {
+    g.add(mesh(rbox(0.42, 0.1, 0.08, 0.03), lamp('#f5f7ff'), s * 0.62, 0.72, -2.27));
+    g.add(mesh(rbox(0.38, 0.1, 0.06, 0.03), lamp('#d01a1a'), s * 0.62, 0.8, 2.24));
+    g.add(mesh(rbox(0.1, 0.06, 0.18, 0.02), paint(color), s * (W / 2 + 0.03), 1.0, -0.6)); // mirrors
   }
-  body.add(mesh(box(0.5, 0.06, 0.06, 0.03), flat(DARK), 0, 0.42, -1.16)); // smile-ish bumper line
-  const ws = wheels(g, [-0.62, 0.62], [-0.72, 0.72]);
-  g.userData.anim = (t, kind) => {
-    const go = kind !== 'done';
-    body.position.y = go ? Math.abs(Math.sin(t * 9)) * 0.05 : Math.abs(Math.sin(t * 5)) * 0.18;
-    body.rotation.z = go ? Math.sin(t * 4.5) * 0.03 : 0;
-    if (go) ws.forEach((w) => { w.rotation.x = -t * 12; });
-  };
+  const wheels = [];
+  for (const s of [-1, 1]) for (const z of [-1.4, 1.35]) {
+    const w = wheel(0.34, 0.24); w.position.set(s * (W / 2 - 0.08), 0.34, z); g.add(w); wheels.push(w);
+  }
+  g.userData = { length: L, anim: (t) => wheels.forEach((w) => { w.rotation.x = -t * 14; }) };
   return g;
 }
 
 function bus(color) {
   const g = new THREE.Group();
-  const body = new THREE.Group();
-  g.add(shadow(1.7, 3.6), body);
-  body.add(mesh(box(1.35, 1.25, 3.2, 0.28), toon(WHITE), 0, 0.98, 0));
-  body.add(mesh(box(1.38, 0.5, 3.22, 0.2), toon(color), 0, 0.6, 0));
-  body.add(mesh(box(1.4, 0.42, 2.7, 0.14), toon(GLASS), 0, 1.25, 0.15));
-  body.add(mesh(box(1.1, 0.5, 0.1, 0.05), toon(GLASS), 0, 1.2, -1.58));
-  for (const s of [-1, 1]) {
-    body.add(mesh(ball(0.1), flat(DARK), s * 0.26, 1.22, -1.66));
-    body.add(mesh(ball(0.1), flat(BLUSH, 0.8), s * 0.48, 1.02, -1.62));
+  const L = 12, W = 2.55, H = 3.0;
+  g.add(shadow(W * 1.4, L * 1.08));
+  g.add(mesh(rbox(W, H - 0.35, L, 0.3), satin('#f4f5f7'), 0, 0.35 + (H - 0.35) / 2, 0));
+  g.add(mesh(rbox(W + 0.02, 0.7, L - 0.1, 0.2), paint(color), 0, 0.75, 0)); // lower livery
+  g.add(mesh(rbox(W + 0.03, 1.05, L - 1.6, 0.1), GLASS, 0, 2.0, 0.55)); // side windows
+  g.add(mesh(rbox(W - 0.2, 1.5, 0.1, 0.1), GLASS, 0, 1.85, -L / 2 - 0.01)); // windscreen
+  g.add(mesh(rbox(W - 0.6, 0.25, 0.08, 0.04), lamp('#ffb340'), 0, 2.78, -L / 2 - 0.02)); // destination sign
+  g.add(mesh(rbox(1.6, 0.35, 2.2, 0.1), satin('#dfe1e5'), 0, H + 0.1, 2.5)); // roof unit
+  for (const s of [-1, 1]) g.add(mesh(rbox(0.3, 0.12, 0.06, 0.03), lamp('#f5f7ff'), s * 0.9, 0.7, -L / 2 - 0.02));
+  const wheels = [];
+  for (const s of [-1, 1]) for (const z of [-3.6, 2.6]) {
+    const w = wheel(0.5, 0.3); w.position.set(s * (W / 2 - 0.12), 0.5, z); g.add(w); wheels.push(w);
   }
-  body.add(mesh(box(0.9, 0.18, 0.08, 0.04), toon(color), 0, 1.7, -1.55)); // route sign
-  const ws = wheels(g, [-0.62, 0.62], [-1.05, 1.05], 0.28);
-  g.userData.anim = (t) => {
-    body.position.y = Math.abs(Math.sin(t * 7)) * 0.05;
-    body.rotation.z = Math.sin(t * 3.5) * 0.025;
-    ws.forEach((w) => { w.rotation.x = -t * 10; });
-  };
+  g.userData = { length: L, anim: (t) => wheels.forEach((w) => { w.rotation.x = -t * 9; }) };
   return g;
+}
+
+// One rail car. Lead cars get a sloped cab front.
+function railCar(len, kind, color, lead) {
+  const c = new THREE.Group();
+  const W = kind === 'tram' ? 2.4 : 2.8, H = kind === 'tram' ? 3.2 : 3.5, floor = kind === 'tram' ? 0.35 : 0.9;
+  const body = satin(kind === 'subway' ? '#d9dce1' : '#f2f3f5');
+  const half = len / 2;
+  if (lead) {
+    const nose = kind === 'train' ? 2.2 : 0.8;
+    c.add(mesh(profile([[half, floor], [half, floor + H * 0.45], [half - nose, floor + H], [-half, floor + H], [-half, floor]], W, 0.18), body));
+    c.add(mesh(profile([[half + 0.02, floor + H * 0.47], [half - nose * 0.55 + 0.02, floor + H * 0.82], [half - nose * 0.75, floor + H * 0.82], [half - 0.15, floor + H * 0.47]], W - 0.5, 0.05), GLASS));
+    for (const s of [-1, 1]) c.add(mesh(rbox(0.35, 0.14, 0.08, 0.03), lamp('#f5f7ff'), s * (W / 2 - 0.45), floor + 0.45, -half - 0.03));
+  } else {
+    c.add(mesh(rbox(W, H, len, 0.22), body, 0, floor + H / 2, 0));
+  }
+  // windows, livery stripe in the line colour, doors
+  c.add(mesh(rbox(W + 0.02, H * 0.3, len - (lead ? 3.2 : 1.2), 0.08), GLASS, 0, floor + H * 0.62, lead ? 0.9 : 0));
+  c.add(mesh(rbox(W + 0.03, H * 0.13, len - 0.3, 0.05), paint(color), 0, floor + H * 0.36, 0));
+  const doors = Math.max(2, Math.round(len / 6));
+  for (let k = 0; k < doors; k++) {
+    const z = -half + (len / doors) * (k + 0.5) + (lead ? 0.6 : 0);
+    for (const s of [-1, 1]) c.add(mesh(rbox(0.04, H * 0.72, 1.3, 0.02), paint(color), s * (W / 2 + 0.02), floor + H * 0.42, z));
+  }
+  if (kind !== 'tram') for (const z of [-half + 2.2, half - 2.2]) c.add(mesh(rbox(W - 0.4, 0.7, 2.6, 0.1), DARK, 0, 0.45, z)); // bogies
+  if ((kind === 'train' || kind === 'tram') && lead) { // pantograph
+    const arm = mesh(rbox(0.08, 0.08, 1.8, 0.03), metal(), 0, floor + H + 0.55, -half + 4.2);
+    arm.rotation.x = 0.45; c.add(arm);
+    c.add(mesh(rbox(1.4, 0.06, 0.12, 0.02), metal(), 0, floor + H + 0.9, -half + 3.4));
+  }
+  c.add(mesh(rbox(W - 0.6, 0.25, len * 0.5, 0.08), satin('#c4c7cc'), 0, floor + H + 0.12, 0.5)); // roof equipment
+  return c;
 }
 
 function train(color, kind) {
   const g = new THREE.Group();
-  const body = new THREE.Group();
-  g.add(shadow(1.4, kind === 'tram' ? 3.0 : 4.4), body);
-  const car = (z, len, lead) => {
-    const c = new THREE.Group();
-    c.position.z = z;
-    c.add(mesh(box(1.2, 1.15, len, 0.3), toon(WHITE), 0, 0.82, 0));
-    c.add(mesh(box(1.23, 0.32, len - 0.06, 0.12), toon(color), 0, 0.5, 0));
-    c.add(mesh(box(1.24, 0.36, len - 0.5, 0.12), toon(GLASS), 0, 1.0, 0));
-    c.add(mesh(box(1.22, 0.1, len - 0.1, 0.05), toon(color), 0, 1.36, 0));
-    for (const zz of [-len / 2 + 0.45, len / 2 - 0.45]) c.add(mesh(box(0.9, 0.18, 0.4, 0.06), toon(DARK), 0, 0.17, zz));
-    if (lead) {
-      const nose = mesh(new THREE.SphereGeometry(0.6, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2), toon(color), 0, 0.82, -len / 2 + 0.05);
-      nose.rotation.x = -Math.PI / 2; nose.scale.set(1, 0.75, 0.95);
-      c.add(nose);
-      c.add(mesh(box(0.8, 0.34, 0.1, 0.05), toon(GLASS), 0, 1.05, -len / 2 - 0.2));
-      face(c, { y: 0.78, z: -len / 2 - 0.42, gap: 0.2, r: 0.08 });
-      if (kind !== 'subway') { // pantograph
-        const p = mesh(box(0.06, 0.35, 0.5, 0.02), toon(DARK), 0, 1.58, -len / 2 + 0.9);
-        p.rotation.x = 0.5; c.add(p);
-      }
-    }
-    body.add(c);
-    return c;
-  };
-  if (kind === 'tram') car(0, 2.7, true);
-  else { car(-0.95, 2.1, true); car(1.25, 1.95, false); }
-  g.userData.anim = (t) => {
-    body.position.y = Math.abs(Math.sin(t * 8)) * 0.03;
-    body.rotation.z = Math.sin(t * 3) * 0.02;
-  };
+  const cars = kind === 'tram' ? [[9, true], [7.5, false], [9, false]] : kind === 'subway' ? [[15, true], [15, false]] : [[19, true], [17, false]];
+  const gap = kind === 'tram' ? 0.15 : 0.6;
+  const total = cars.reduce((s, [l]) => s + l, 0) + gap * (cars.length - 1);
+  let z = -total / 2;
+  for (const [len, lead] of cars) {
+    const c = railCar(len, kind, color, lead);
+    c.position.z = z + len / 2;
+    g.add(c);
+    z += len + gap;
+  }
+  g.add(shadow(4.2, total * 1.06));
+  g.userData = { length: total * (kind === 'tram' ? 0.95 : 0.8), anim: () => {} };
   return g;
 }
 
 function plane(color) {
   const g = new THREE.Group();
   const air = new THREE.Group();
-  air.position.y = 1.5;
-  g.add(shadow(2.2, 1.6), air);
-  air.add(mesh(pill(0.42, 1.7), toon(WHITE)).rotateX(Math.PI / 2));
-  air.add(mesh(box(3.1, 0.12, 0.75, 0.06), toon(color), 0, -0.08, 0.05));
-  air.add(mesh(box(1.2, 0.08, 0.4, 0.04), toon(color), 0, 0.12, 1.2));
-  air.add(mesh(box(0.1, 0.65, 0.5, 0.05), toon(color), 0, 0.46, 1.15));
+  g.add(shadow(22, 20), air);
+  // fuselage: lathe profile (radius, along) from tail (-) to nose (+)
+  const prof = [[0, -19], [0.5, -18.4], [1.3, -15], [1.95, -9], [2.0, 8], [1.85, 12.5], [1.4, 15.5], [0.75, 17.3], [0, 18.2]].map(([r, y]) => new THREE.Vector2(r, y));
+  const fus = new THREE.LatheGeometry(prof, 28);
+  fus.rotateX(-Math.PI / 2); // +y (nose) -> -z
+  air.add(mesh(fus, satin('#f7f7f8')));
+  air.add(mesh(profile([[16.6, 0.25], [15.8, 1.05], [15.0, 1.05], [16.0, 0.2]], 2.2, 0.04), GLASS, 0, 0.55, 0)); // cockpit
+  air.add(mesh(rbox(0.08, 0.32, 24, 0.03), GLASS, 2.0, 0.55, -1.5)); // cabin windows (as a band)
+  air.add(mesh(rbox(0.08, 0.32, 24, 0.03), GLASS, -2.0, 0.55, -1.5));
+  air.add(mesh(rbox(0.06, 0.35, 30, 0.03), paint(color), 2.02, -0.05, -1));
+  air.add(mesh(rbox(0.06, 0.35, 30, 0.03), paint(color), -2.02, -0.05, -1));
+  // swept wings and engines
   for (const s of [-1, 1]) {
-    const e = mesh(cyl(0.15, 0.5), toon('#c7c7cc'), s * 0.8, -0.28, -0.05);
-    e.rotation.x = Math.PI / 2; air.add(e);
+    const wing = plan([[0, 3.5], [s * 17, -4.5], [s * 17.4, -6.3], [s * 17, -6.6], [0, -3.8]], 0.45);
+    air.add(mesh(wing, satin('#e9eaed'), 0, -0.9, 0));
+    const tip = mesh(rbox(0.15, 1.6, 1.2, 0.05), paint(color), s * 17.2, -0.1, 5.9);
+    tip.rotation.x = 0.3; air.add(tip); // winglet
+    const eng = mesh(new THREE.CylinderGeometry(1.05, 0.85, 4.2, 22), satin('#dcdde0'), s * 6.2, -1.9, -0.6);
+    eng.rotation.x = Math.PI / 2; air.add(eng);
+    air.add(mesh(new THREE.CircleGeometry(0.85, 22), DARK, s * 6.2, -1.9, -2.72).rotateY(Math.PI));
+    air.add(mesh(rbox(0.3, 1.0, 2.4, 0.1), satin('#e9eaed'), s * 6.2, -1.2, -0.2)); // pylon
+    const stab = plan([[0, -13.5], [s * 6.5, -17.8], [s * 6.6, -19], [0, -18.5]], 0.25);
+    air.add(mesh(stab, satin('#e9eaed'), 0, 0.6, 0));
   }
-  for (let k = 0; k < 4; k++) for (const s of [-1, 1]) air.add(mesh(ball(0.055), flat('#5ab0f0'), s * 0.4, 0.12, -0.5 + k * 0.32));
-  face(air, { y: 0.1, z: -1.22, gap: 0.15, r: 0.07 });
-  g.userData.anim = (t, kind) => {
-    const flying = kind === 'flight';
-    air.position.y = flying ? 1.5 + Math.sin(t * 2.4) * 0.1 : 0.45;
-    air.rotation.z = flying ? Math.sin(t * 1.6) * 0.12 : 0;
-    g.children[0].scale.setScalar(flying ? 0.75 : 1);
+  // vertical tail in the friend's colour
+  const fin = profile([[-12.8, 1.4], [-17.6, 8.6], [-19.6, 8.6], [-18.8, 1.4]], 0.35, 0.05);
+  air.add(mesh(fin, paint(color)));
+  g.userData = {
+    length: 34,
+    anim: (t, kind) => {
+      const flying = kind === 'flight';
+      air.position.y = flying ? 9 + Math.sin(t * 1.4) * 0.4 : 2.6;
+      air.rotation.z = flying ? Math.sin(t * 0.9) * 0.06 : 0;
+      g.children[0].material.opacity = flying ? 0.55 : 1;
+    },
   };
   return g;
 }
@@ -226,42 +222,44 @@ function plane(color) {
 function ferry(color) {
   const g = new THREE.Group();
   const boat = new THREE.Group();
-  g.add(shadow(1.8, 3.2), boat);
-  boat.add(mesh(box(1.4, 0.6, 3.0, 0.3), toon(color), 0, 0.3, 0));
-  boat.add(mesh(box(1.42, 0.14, 3.02, 0.07), toon(WHITE), 0, 0.62, 0));
-  boat.add(mesh(box(1.0, 0.6, 1.5, 0.15), toon(WHITE), 0, 1.0, 0.25));
-  boat.add(mesh(box(1.02, 0.2, 1.3, 0.08), toon(GLASS), 0, 1.06, 0.25));
-  boat.add(mesh(cyl(0.18, 0.5), toon(color), 0, 1.5, 0.6));
-  face(boat, { y: 0.38, z: -1.5, gap: 0.24, r: 0.08 });
-  g.userData.anim = (t) => {
-    boat.position.y = Math.sin(t * 2.2) * 0.06;
-    boat.rotation.z = Math.sin(t * 1.7) * 0.07;
-    boat.rotation.x = Math.sin(t * 2.2 + 1) * 0.03;
+  g.add(shadow(12, 40), boat);
+  const hull = plan([[-5, 15], [5, 15], [5, -10], [3.5, -15.5], [0, -18], [-3.5, -15.5], [-5, -10]], 3.2);
+  boat.add(mesh(hull, satin('#1f3550'), 0, 1.2, 0));
+  boat.add(mesh(plan([[-5.05, 15], [5.05, 15], [5.05, -10], [3.55, -15.5], [0, -18.05], [-3.55, -15.5], [-5.05, -10]], 0.5), satin('#f4f5f7'), 0, 3.0, 0));
+  boat.add(mesh(rbox(9, 3.2, 20, 0.4), satin('#f7f7f8'), 0, 4.8, 2));
+  boat.add(mesh(rbox(9.05, 1.0, 19, 0.2), GLASS, 0, 5.2, 2));
+  boat.add(mesh(rbox(7, 2.6, 9, 0.4), satin('#f7f7f8'), 0, 7.6, -1));
+  boat.add(mesh(rbox(7.05, 0.9, 8.6, 0.2), GLASS, 0, 7.9, -1));
+  boat.add(mesh(new THREE.CylinderGeometry(1.0, 1.2, 3.2, 20), paint(color), 0, 9.6, 5));
+  boat.add(mesh(new THREE.CylinderGeometry(1.02, 1.02, 0.5, 20), DARK, 0, 11.1, 5));
+  g.userData = {
+    length: 34,
+    anim: (t) => {
+      boat.position.y = Math.sin(t * 1.6) * 0.15;
+      boat.rotation.z = Math.sin(t * 1.2) * 0.03;
+      boat.rotation.x = Math.sin(t * 1.6 + 1) * 0.012;
+    },
   };
   return g;
 }
 
+// Each model is scaled so its length fills a similar part of the canvas.
+const FIT = { car: 3.6, bus: 4.4, subway: 5.6, train: 5.6, tram: 5.0, flight: 5.0, ferry: 4.6 };
 function build(kind, color, lineColor) {
-  const sized = (g, s) => { g.scale.setScalar(s); return g; };
-  switch (kind) {
-    case 'car': return sized(car(color), 1.3);
-    case 'bus': return sized(bus(color), 1.05);
-    case 'subway': case 'train': return sized(train(lineColor || color, kind), 0.88);
-    case 'tram': return sized(train(lineColor || color, kind), 1.1);
-    case 'flight': return sized(plane(color), 1.15);
-    case 'ferry': return sized(ferry(color), 1.15);
-    default: return person(color);
-  }
+  const make = { car: () => car(color), bus: () => bus(color), flight: () => plane(color), ferry: () => ferry(color) }[kind]
+    || (() => train(lineColor || color, kind));
+  const g = make();
+  g.scale.setScalar((FIT[kind] || 4.5) / g.userData.length);
+  return g;
 }
 
-// ---------- the scene that draws all travelers ----------
+// ---------- the scene that draws all vehicles ----------
 export function createToys(map) {
   const scene = new THREE.Scene();
-  scene.add(new THREE.HemisphereLight(0xffffff, 0xc9d2e0, 1.9));
-  const sun = new THREE.DirectionalLight(0xffffff, 1.6);
-  sun.position.set(3, 7, 2);
-  scene.add(sun);
-  const cam = new THREE.PerspectiveCamera(28, 1, 0.1, 100);
+  const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+  sun.position.set(4, 8, 3);
+  scene.add(sun, new THREE.AmbientLight(0xffffff, 0.35));
+  const cam = new THREE.PerspectiveCamera(26, 1, 0.1, 200);
   const stage = new THREE.Group();
   scene.add(stage);
 
@@ -270,20 +268,23 @@ export function createToys(map) {
   const t0 = performance.now();
 
   function add(color, canvas) {
-    const toy = { color, canvas, ctx: canvas.getContext('2d'), kind: '', key: '', model: null, models: new Map(), heading: 0, shown: 0, pop: 0 };
+    const toy = { color, canvas, ctx: canvas.getContext('2d'), kind: '', key: '', model: null, models: new Map(), heading: 0, shown: null, fade: 0 };
     toys.push(toy);
     return {
       set({ kind, heading, lineColor }) {
-        const model = kind === 'wait' || kind === 'done' ? 'person' : kind;
-        const key = model + (lineColor || '');
+        if (heading != null && Number.isFinite(heading)) toy.heading = heading;
+        toy.kind = kind;
+        if (ON_FOOT.has(kind)) {
+          if (toy.model) { toy.model = null; toy.key = ''; toy.ctx.clearRect(0, 0, PX, PX); }
+          return;
+        }
+        const key = kind + (lineColor || '');
         if (key !== toy.key) {
           toy.key = key;
-          if (!toy.models.has(key)) toy.models.set(key, build(model, color, lineColor));
+          if (!toy.models.has(key)) toy.models.set(key, build(kind, color, lineColor));
           toy.model = toy.models.get(key);
-          toy.pop = performance.now();
+          toy.fade = performance.now();
         }
-        toy.kind = kind;
-        if (heading != null && Number.isFinite(heading)) toy.heading = heading;
       },
     };
   }
@@ -292,11 +293,12 @@ export function createToys(map) {
     raf = 0;
     if (!alive) return;
     const r = getRenderer();
+    scene.environment = envMap;
     const t = (performance.now() - t0) / 1000;
-    const el = Math.max(24, Math.min(62, 90 - map.getPitch())) * R;
-    const dist = 8.6;
-    cam.position.set(0, Math.sin(el) * dist + 0.6, Math.cos(el) * dist);
-    cam.lookAt(0, 1.0, 0);
+    const el = Math.max(28, Math.min(64, 90 - map.getPitch())) * R;
+    const dist = 13;
+    cam.position.set(0, Math.sin(el) * dist, Math.cos(el) * dist);
+    cam.lookAt(0, 0.35, 0);
     const bearing = map.getBearing();
     for (const toy of toys) {
       if (!toy.model) continue;
@@ -304,18 +306,16 @@ export function createToys(map) {
       stage.add(toy.model);
       // turn smoothly toward the direction of travel (on screen)
       const want = -(toy.heading - bearing) * R;
-      let d = want - toy.shown;
-      d = Math.atan2(Math.sin(d), Math.cos(d));
-      toy.shown += d * 0.2;
-      // standing people turn to face you; everything else faces where it is going
-      toy.model.rotation.y = toy.kind === 'done' || toy.kind === 'wait' ? Math.PI + Math.sin(t * 0.8) * 0.3 : toy.shown;
-      const p = Math.min(1, (performance.now() - toy.pop) / 380); // little pop when switching vehicle
-      const s = p < 1 ? 0.55 + 0.45 * (1 + 2.2 * Math.pow(p - 1, 3) + 1.2 * Math.pow(p - 1, 2)) : 1;
-      stage.scale.setScalar(s);
+      if (toy.shown == null) toy.shown = want;
+      const d = Math.atan2(Math.sin(want - toy.shown), Math.cos(want - toy.shown));
+      toy.shown += d * 0.15;
+      toy.model.rotation.y = toy.shown;
       toy.model.userData.anim?.(t, toy.kind);
       r.render(scene, cam);
       toy.ctx.clearRect(0, 0, PX, PX);
+      toy.ctx.globalAlpha = Math.min(1, (performance.now() - toy.fade) / 250); // soft switch between vehicles
       toy.ctx.drawImage(r.domElement, 0, 0, PX, PX);
+      toy.ctx.globalAlpha = 1;
     }
     stage.clear();
     raf = requestAnimationFrame(frame);
