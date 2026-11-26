@@ -173,7 +173,7 @@ function train(color, kind) {
     z += len + gap;
   }
   g.add(shadow(4.2, total * 1.06));
-  g.userData = { length: total * (kind === 'tram' ? 0.95 : 0.8), anim: () => {} };
+  g.userData = { length: total, anim: () => {} };
   return g;
 }
 
@@ -244,7 +244,7 @@ function ferry(color) {
 }
 
 // Each model is scaled so its length fills a similar part of the canvas.
-const FIT = { car: 3.6, bus: 4.4, subway: 5.6, train: 5.6, tram: 5.0, flight: 5.0, ferry: 4.6 };
+const FIT = { car: 3.6, bus: 4.4, subway: 4.0, train: 4.2, tram: 3.2, flight: 5.0, ferry: 4.6 };
 function build(kind, color, lineColor) {
   const make = { car: () => car(color), bus: () => bus(color), flight: () => plane(color), ferry: () => ferry(color) }[kind]
     || (() => train(lineColor || color, kind));
