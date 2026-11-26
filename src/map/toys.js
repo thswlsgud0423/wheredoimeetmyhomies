@@ -180,40 +180,43 @@ function train(color, kind) {
 function plane(color) {
   const g = new THREE.Group();
   const air = new THREE.Group();
-  g.add(shadow(22, 20), air);
+  const shade = shadow(20, 22);
+  g.add(shade, air);
   // fuselage: lathe profile (radius, along) from tail (-) to nose (+)
-  const prof = [[0, -19], [0.5, -18.4], [1.3, -15], [1.95, -9], [2.0, 8], [1.85, 12.5], [1.4, 15.5], [0.75, 17.3], [0, 18.2]].map(([r, y]) => new THREE.Vector2(r, y));
-  const fus = new THREE.LatheGeometry(prof, 28);
+  const prof = [[0, -18], [0.6, -17.4], [1.6, -14], [2.35, -8], [2.4, 9], [2.2, 12.8], [1.6, 15.4], [0.8, 17], [0, 17.8]].map(([r, y]) => new THREE.Vector2(r, y));
+  const fus = new THREE.LatheGeometry(prof, 32);
   fus.rotateX(-Math.PI / 2); // +y (nose) -> -z
-  air.add(mesh(fus, satin('#f7f7f8')));
-  air.add(mesh(profile([[16.6, 0.25], [15.8, 1.05], [15.0, 1.05], [16.0, 0.2]], 2.2, 0.04), GLASS, 0, 0.55, 0)); // cockpit
-  air.add(mesh(rbox(0.08, 0.32, 24, 0.03), GLASS, 2.0, 0.55, -1.5)); // cabin windows (as a band)
-  air.add(mesh(rbox(0.08, 0.32, 24, 0.03), GLASS, -2.0, 0.55, -1.5));
-  air.add(mesh(rbox(0.06, 0.35, 30, 0.03), paint(color), 2.02, -0.05, -1));
-  air.add(mesh(rbox(0.06, 0.35, 30, 0.03), paint(color), -2.02, -0.05, -1));
-  // swept wings and engines
+  air.add(mesh(fus, paint('#fbfbfc')));
+  air.add(mesh(profile([[16.2, 0.4], [15.2, 1.35], [14.2, 1.35], [15.4, 0.35]], 2.8, 0.05), GLASS, 0, 0.5, 0)); // cockpit windows
   for (const s of [-1, 1]) {
-    const wing = plan([[0, 3.5], [s * 17, -4.5], [s * 17.4, -6.3], [s * 17, -6.6], [0, -3.8]], 0.45);
-    air.add(mesh(wing, satin('#e9eaed'), 0, -0.9, 0));
-    const tip = mesh(rbox(0.15, 1.6, 1.2, 0.05), paint(color), s * 17.2, -0.1, 5.9);
-    tip.rotation.x = 0.3; air.add(tip); // winglet
-    const eng = mesh(new THREE.CylinderGeometry(1.05, 0.85, 4.2, 22), satin('#dcdde0'), s * 6.2, -1.9, -0.6);
+    air.add(mesh(rbox(0.1, 0.38, 21, 0.04), GLASS, s * 2.33, 0.75, -1)); // cabin window band
+    air.add(mesh(rbox(0.1, 0.7, 30, 0.05), paint(color), s * 2.36, -0.25, -0.5)); // cheatline
+  }
+  // wings: grey, so they stand out from the white body
+  const WING = satin('#aeb4bd');
+  for (const s of [-1, 1]) {
+    air.add(mesh(plan([[s * 1.5, 4.2], [s * 14.5, -3.6], [s * 14.8, -5.4], [s * 1.5, -3.2]], 0.55), WING, 0, -1.3, 0));
+    const tip = mesh(rbox(0.18, 1.5, 1.3, 0.06), paint(color), s * 14.7, -0.6, 4.6);
+    tip.rotation.x = 0.35; air.add(tip); // winglet
+    const eng = mesh(new THREE.CylinderGeometry(1.25, 1.0, 4.4, 24), paint(color), s * 5.6, -2.5, -1.4);
     eng.rotation.x = Math.PI / 2; air.add(eng);
-    air.add(mesh(new THREE.CircleGeometry(0.85, 22), DARK, s * 6.2, -1.9, -2.72).rotateY(Math.PI));
-    air.add(mesh(rbox(0.3, 1.0, 2.4, 0.1), satin('#e9eaed'), s * 6.2, -1.2, -0.2)); // pylon
-    const stab = plan([[0, -13.5], [s * 6.5, -17.8], [s * 6.6, -19], [0, -18.5]], 0.25);
-    air.add(mesh(stab, satin('#e9eaed'), 0, 0.6, 0));
+    air.add(mesh(new THREE.CircleGeometry(1.0, 24), DARK, s * 5.6, -2.5, -3.62).rotateY(Math.PI));
+    air.add(mesh(rbox(0.35, 1.1, 2.6, 0.1), WING, s * 5.6, -1.7, -0.8)); // pylon
+    air.add(mesh(plan([[s * 0.8, -12.6], [s * 6.2, -16.4], [s * 6.3, -17.6], [s * 0.8, -17.2]], 0.3), WING, 0, 0.7, 0));
   }
   // vertical tail in the friend's colour
-  const fin = profile([[-12.8, 1.4], [-17.6, 8.6], [-19.6, 8.6], [-18.8, 1.4]], 0.35, 0.05);
-  air.add(mesh(fin, paint(color)));
+  air.add(mesh(profile([[-11.6, 1.8], [-16.4, 9.4], [-18.6, 9.4], [-17.8, 1.8]], 0.45, 0.06), paint(color)));
   g.userData = {
-    length: 34,
-    anim: (t, kind) => {
+    length: 36,
+    // climbs after take-off, cruises, descends to land (p = 0..1 through the flight)
+    anim: (t, kind, p = 0.5) => {
       const flying = kind === 'flight';
-      air.position.y = flying ? 9 + Math.sin(t * 1.4) * 0.4 : 2.6;
-      air.rotation.z = flying ? Math.sin(t * 0.9) * 0.06 : 0;
-      g.children[0].material.opacity = flying ? 0.55 : 1;
+      const up = flying ? Math.min(1, p / 0.12, (1 - p) / 0.12) : 0;
+      const ease = up * up * (3 - 2 * up);
+      air.position.y = 2.6 + ease * 6 + (flying ? Math.sin(t * 1.3) * 0.15 : 0);
+      air.rotation.x = flying ? (p < 0.12 ? 0.12 : p > 0.88 ? -0.06 : 0) : 0; // nose up on climb, down on approach
+      shade.material.opacity = 1 - ease * 0.5;
+      shade.scale.set(20 - ease * 4, 22 - ease * 4, 1);
     },
   };
   return g;
@@ -271,8 +274,10 @@ export function createToys(map) {
     const toy = { color, canvas, ctx: canvas.getContext('2d'), kind: '', key: '', model: null, models: new Map(), heading: 0, shown: null, fade: 0 };
     toys.push(toy);
     return {
-      set({ kind, heading, lineColor }) {
+      // heading: degrees clockwise from screen-up (already includes map bearing, pitch and globe curvature)
+      set({ kind, heading, lineColor, progress }) {
         if (heading != null && Number.isFinite(heading)) toy.heading = heading;
+        toy.progress = progress;
         toy.kind = kind;
         if (ON_FOOT.has(kind)) {
           if (toy.model) { toy.model = null; toy.key = ''; toy.ctx.clearRect(0, 0, PX, PX); }
@@ -299,18 +304,17 @@ export function createToys(map) {
     const dist = 13;
     cam.position.set(0, Math.sin(el) * dist, Math.cos(el) * dist);
     cam.lookAt(0, 0.35, 0);
-    const bearing = map.getBearing();
     for (const toy of toys) {
       if (!toy.model) continue;
       stage.clear();
       stage.add(toy.model);
       // turn smoothly toward the direction of travel (on screen)
-      const want = -(toy.heading - bearing) * R;
+      const want = -toy.heading * R;
       if (toy.shown == null) toy.shown = want;
       const d = Math.atan2(Math.sin(want - toy.shown), Math.cos(want - toy.shown));
       toy.shown += d * 0.15;
       toy.model.rotation.y = toy.shown;
-      toy.model.userData.anim?.(t, toy.kind);
+      toy.model.userData.anim?.(t, toy.kind, toy.progress);
       r.render(scene, cam);
       toy.ctx.clearRect(0, 0, PX, PX);
       toy.ctx.globalAlpha = Math.min(1, (performance.now() - toy.fade) / 250); // soft switch between vehicles

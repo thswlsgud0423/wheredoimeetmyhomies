@@ -79,12 +79,25 @@ export function createJourney(map, people, legsPer, { sameArrival = false } = {}
         else f = Math.min(1, tf / Math.max(1, fly));
         if (tf > fly) mode = 'wait';
       }
-      const { pos, heading } = along(l.coords, f);
+      const { pos } = along(l.coords, f);
+      // a point slightly further along, to know which way to face on screen
+      const step = Math.max(0.002, 0.02 / Math.max(1, l.coords.length));
+      const ahead = f + step <= 1 ? along(l.coords, f + step).pos : null;
+      const behind = ahead ? null : along(l.coords, Math.max(0, f - step)).pos;
       trail.push(sliceAlong(l.coords, f));
-      return { pos, heading, mode, leg: l, done: false, trail };
+      return { pos, ahead, behind, progress: f, mode, leg: l, done: false, trail };
     }
     const last = legs[legs.length - 1];
     return { pos: last ? last.coords[last.coords.length - 1] : people[i].pos, mode: 'done', done: true, trail };
+  }
+
+  // Direction of travel as it looks on screen (works on the globe and with any pitch / bearing).
+  function screenHeading(s) {
+    if (!s.ahead && !s.behind) return null;
+    const a = map.project(s.behind || s.pos), b = map.project(s.ahead || s.pos);
+    const dx = b.x - a.x, dy = b.y - a.y;
+    if (Math.hypot(dx, dy) < 0.05) return null;
+    return Math.atan2(dx, -dy) / (Math.PI / 180);
   }
 
   function render(clock) {
@@ -95,7 +108,7 @@ export function createJourney(map, people, legsPer, { sameArrival = false } = {}
       m.setLngLat(s.pos);
       const el = m.getElement();
       const kind = s.done ? 'done' : s.mode === 'wait' ? 'wait' : MODE_NAME[s.mode] ? s.mode : 'walk';
-      handles[i].set({ kind, heading: s.heading, lineColor: s.leg?.line?.colour || '' });
+      handles[i].set({ kind, heading: screenHeading(s), lineColor: s.leg?.line?.colour || '', progress: s.progress });
       el.classList.toggle('done', s.done);
       el.classList.toggle('on-foot', ON_FOOT.has(kind));
       el.classList.toggle('walking', kind === 'walk');

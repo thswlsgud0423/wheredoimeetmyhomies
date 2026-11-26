@@ -16,7 +16,9 @@ Works inside one city (real rail lines from OpenStreetMap), between cities, and 
 npm install
 npm run dev
 ```
-`npm run build` makes a static site in `dist/` that any static host (GitHub Pages, Vercel, Netlify) can serve.
+`npm run build` makes a static site in `dist/` that any static host can serve.
+
+**Live:** https://thswlsgud0423.github.io/wheredoimeetmyhomies/ — every push to `main` is tested, built and published to GitHub Pages by `.github/workflows/deploy.yml`.
 
 - `npm test` runs the engine tests (Vienna U-Bahn/tram, Seoul subway, East Asia flights, Europe, across the Pacific).
 - `npm run data` rebuilds `src/data/` (airports, cities, bundled Vienna and Seoul rail networks); `node scripts/build-data.mjs vienna` rebuilds one city.
