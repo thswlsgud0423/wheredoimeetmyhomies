@@ -1,10 +1,9 @@
 // Moves each friend's avatar along their legs: walk, bus, subway, train, car, ferry, flight.
 import { along, sliceAlong, greatCircle, smooth } from '../geo.js';
 import { setData, maplibregl } from './scene.js';
+import { ICONS } from './icons.js';
 
-export const MODE_ICON = {
-  walk: '🚶', bus: '🚌', subway: '🚇', train: '🚆', tram: '🚋', car: '🚗', ferry: '⛴️', flight: '✈️', wait: '⏳',
-};
+export const MODE_ICON = ICONS;
 export const MODE_NAME = {
   walk: 'Walk', bus: 'Bus', subway: 'Subway', train: 'Train', tram: 'Tram', car: 'Car', ferry: 'Ferry', flight: 'Flight',
 };
@@ -41,7 +40,7 @@ export function createJourney(map, people, legsPer, { sameArrival = false } = {}
   setData(map, 'routes', {
     type: 'FeatureCollection',
     features: prepared.flatMap((legs, i) => legs.map((l) => ({
-      type: 'Feature', properties: { color: people[i].color }, geometry: { type: 'LineString', coordinates: l.coords },
+      type: 'Feature', properties: { color: people[i].color, kind: l.mode }, geometry: { type: 'LineString', coordinates: l.coords },
     }))),
   });
 
@@ -88,11 +87,11 @@ export function createJourney(map, people, legsPer, { sameArrival = false } = {}
       const m = markers[i];
       m.setLngLat(s.pos);
       const el = m.getElement();
-      const icon = s.done ? '🎉' : MODE_ICON[s.mode] ?? '•';
+      const key = s.done ? 'done' : ICONS[s.mode] ? s.mode : 'walk';
       const iconEl = el.querySelector('.traveler-icon');
-      if (iconEl.textContent !== icon) iconEl.textContent = icon;
-      // planes point along their route (the emoji itself faces north-east)
-      iconEl.style.transform = s.mode === 'flight' ? `rotate(${(s.heading ?? 0) - 45}deg)` : '';
+      if (iconEl.dataset.k !== key) { iconEl.dataset.k = key; iconEl.innerHTML = ICONS[key]; }
+      // planes point along their route (the icon faces north)
+      iconEl.firstChild.style.transform = s.mode === 'flight' ? `rotate(${(s.heading ?? 0) - map.getBearing()}deg)` : '';
       el.classList.toggle('done', s.done);
       for (const c of s.trail) if (c.length > 1) features.push({ type: 'Feature', properties: { color: p.color }, geometry: { type: 'LineString', coordinates: c } });
       return s;

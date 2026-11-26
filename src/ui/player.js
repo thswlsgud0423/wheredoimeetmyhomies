@@ -1,3 +1,4 @@
+import { UI } from '../map/icons.js';
 // Bottom timeline: play/pause, scrub, speed, skip. Drives one animation at a time.
 const SPEEDS = [1, 2, 4, 0.5];
 
@@ -10,6 +11,7 @@ export function createPlayer(root) {
   let cur = null; // { durationMs, onFrame, onEnd, f, playing, last }
   let speedIdx = 0;
   let raf = 0;
+  skipBtn.innerHTML = UI.skip;
 
   const loop = (now) => {
     raf = 0;
@@ -23,7 +25,7 @@ export function createPlayer(root) {
     cur.onFrame(cur.f);
     if (cur.f >= 1 && cur.playing) {
       cur.playing = false;
-      btn.textContent = '↻';
+      btn.innerHTML = UI.replay;
       const done = cur.onEnd; cur.onEnd = null;
       done?.();
     }
@@ -36,7 +38,7 @@ export function createPlayer(root) {
     if (cur.f >= 1) { cur.f = 0; }
     cur.playing = !cur.playing;
     cur.last = 0;
-    btn.textContent = cur.playing ? '⏸' : '▶';
+    btn.innerHTML = cur.playing ? UI.pause : UI.play;
     kick();
   });
   speedBtn.addEventListener('click', () => {
@@ -50,7 +52,7 @@ export function createPlayer(root) {
   scrub.addEventListener('input', () => {
     if (!cur) return;
     cur.f = +scrub.value / 1000;
-    cur.playing = false; btn.textContent = '▶';
+    cur.playing = false; btn.innerHTML = UI.play;
     cur.dirty = true; kick();
   });
 
@@ -59,7 +61,7 @@ export function createPlayer(root) {
       root.hidden = false;
       label.textContent = text;
       cur = { durationMs, onFrame, onEnd, f: 0, playing: true, last: 0 };
-      btn.textContent = '⏸';
+      btn.innerHTML = UI.pause;
       kick();
       return new Promise((resolve) => {
         const end = cur.onEnd;

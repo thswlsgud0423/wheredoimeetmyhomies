@@ -1,18 +1,20 @@
-// "Who's coming" editor: up to 10 friends plus you, each with a place and a way to travel.
+// "Who's coming" editor: you plus up to 10 friends, each with a start point and a way to travel.
 import { searchPlaces } from '../data/load.js';
 import { MODES } from '../engine/fairness.js';
+import { ICONS, UI } from '../map/icons.js';
 
-export const COLORS = ['#ff5ea8', '#4dd8ff', '#ffd23f', '#7cff6b', '#b78cff', '#ff8a3d', '#3dffcf', '#ff5a5a', '#8aa1ff', '#f6a6ff', '#c6ff3d'];
+// Apple system colors (blue is kept for the meeting place / accent).
+export const COLORS = ['#ff9500', '#34c759', '#af52de', '#ff2d55', '#30b0c7', '#5856d6', '#ff3b30', '#e6b800', '#a2845e', '#00c7be', '#8e8e93'];
 export const MAX_FRIENDS = 10;
 const TRAVEL = [
-  { key: 'transit', icon: '🚇', label: 'Public transport' },
-  { key: 'car', icon: '🚗', label: 'Car' },
-  { key: 'walk', icon: '🚶', label: 'Walk' },
+  { key: 'transit', icon: ICONS.subway, label: 'Public transport' },
+  { key: 'car', icon: ICONS.car, label: 'Car' },
+  { key: 'walk', icon: ICONS.walk, label: 'Walk' },
 ];
 
 export const SAMPLES = {
   seoul: {
-    label: '🇰🇷 Seoul crew',
+    label: 'Seoul',
     people: [
       ['You', 'Gangnam Station', 127.0276, 37.4979],
       ['Minji', 'Hongik Univ. (Hongdae)', 126.9237, 37.5563],
@@ -21,7 +23,7 @@ export const SAMPLES = {
     ],
   },
   asia: {
-    label: '🌏 East Asia',
+    label: 'East Asia',
     people: [
       ['You', 'Seoul', 126.978, 37.566],
       ['Yuki', 'Tokyo', 139.692, 35.69],
@@ -30,7 +32,7 @@ export const SAMPLES = {
     ],
   },
   europe: {
-    label: '🇪🇺 Europe',
+    label: 'Europe',
     people: [
       ['You', 'London', -0.1276, 51.5072],
       ['Léa', 'Paris', 2.3522, 48.8566],
@@ -40,7 +42,7 @@ export const SAMPLES = {
     ],
   },
   world: {
-    label: '🌍 Worldwide',
+    label: 'Worldwide',
     people: [
       ['You', 'Seoul', 126.978, 37.566],
       ['Sam', 'New York', -74.006, 40.7128],
@@ -50,48 +52,47 @@ export const SAMPLES = {
   },
 };
 
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 export function createSetup(root, { state, onChange, onFind, onPickOnMap, getBias }) {
   function render() {
     const friends = state.people.length - 1;
     root.innerHTML = `
       <div class="samples">
-        <span class="hint">Try:</span>
+        <span class="hint">Examples</span>
         ${Object.entries(SAMPLES).map(([k, s]) => `<button class="chip" data-sample="${k}">${s.label}</button>`).join('')}
       </div>
-      <h2>Who's coming <small>you + ${friends} friend${friends === 1 ? '' : 's'}</small></h2>
-      <ul class="people">
+      <div class="group-head"><h2>Who's coming</h2><span class="hint">You + ${friends} friend${friends === 1 ? '' : 's'}</span></div>
+      <ul class="people list">
         ${state.people.map((p, i) => `
           <li class="person" data-i="${i}" style="--c:${p.color}">
-            <div class="person-top">
-              <span class="dot"></span>
-              <input class="name" value="${esc(p.name)}" maxlength="16" aria-label="Name" />
-              <div class="travel" role="group" aria-label="How ${esc(p.name)} travels">
-                ${TRAVEL.map((t) => `<button class="tbtn ${p.mode === t.key ? 'on' : ''}" data-mode="${t.key}" title="${t.label}">${t.icon}</button>`).join('')}
+            <span class="avatar-sm">${esc(p.name.slice(0, 1).toUpperCase())}</span>
+            <div class="person-main">
+              <div class="person-top">
+                <input class="name" value="${esc(p.name)}" maxlength="16" aria-label="Name" />
+                <div class="seg small" role="group" aria-label="How ${esc(p.name)} travels">
+                  ${TRAVEL.map((t) => `<button class="${p.mode === t.key ? 'on' : ''}" data-mode="${t.key}" title="${t.label}" aria-label="${t.label}">${t.icon}</button>`).join('')}
+                </div>
               </div>
-              ${i > 0 ? `<button class="icon-btn remove" title="Remove">✕</button>` : ''}
-            </div>
-            <div class="where">
-              <input class="place" placeholder="Search a place or address…" value="${esc(p.place || '')}" autocomplete="off" aria-label="Where ${esc(p.name)} starts" />
-              <button class="icon-btn pick" title="Pick on the map">📍</button>
-              <ul class="suggest" hidden></ul>
+              <div class="where">
+                <input class="place" placeholder="Search a place or address" value="${esc(p.place || '')}" autocomplete="off" aria-label="Where ${esc(p.name)} starts" />
+                <button class="icon-btn pick" title="Pick on the map" aria-label="Pick on the map">${UI.pin}</button>
+                ${i > 0 ? `<button class="icon-btn remove" title="Remove" aria-label="Remove ${esc(p.name)}">${UI.close}</button>` : ''}
+                <ul class="suggest" hidden></ul>
+              </div>
             </div>
           </li>`).join('')}
       </ul>
-      <button class="ghost add" ${friends >= MAX_FRIENDS ? 'disabled' : ''}>+ Add a friend <small>(${friends}/${MAX_FRIENDS})</small></button>
+      <button class="link add" ${friends >= MAX_FRIENDS ? 'disabled' : ''}>Add a friend <span class="hint">${friends}/${MAX_FRIENDS}</span></button>
 
-      <h2>What counts as fair?</h2>
-      <div class="modes">
-        ${Object.values(MODES).map((m) => `
-          <button class="mode ${state.mode === m.key ? 'on' : ''}" data-fair="${m.key}">
-            <span class="mode-icon">${m.icon}</span><b>${m.name}</b><span>${m.blurb}</span>
-          </button>`).join('')}
+      <div class="group-head"><h2>What counts as fair?</h2></div>
+      <div class="seg wide">
+        ${Object.values(MODES).map((m) => `<button class="${state.mode === m.key ? 'on' : ''}" data-fair="${m.key}">${m.name}</button>`).join('')}
       </div>
-      <p class="hint small">You can switch modes later; all three are computed at once.</p>
+      <p class="hint small">${MODES[state.mode].blurb} All three are computed, so you can switch later.</p>
 
-      <button class="primary find" ${state.people.filter((p) => p.pos).length < 2 ? 'disabled' : ''}>✨ Find our fair spot</button>
-      <p class="hint small fine">Travel times are estimates from a model: real rail lines from OpenStreetMap in cities, average speeds between cities, and flights between major airports.</p>
+      <button class="primary find" ${state.people.filter((p) => p.pos).length < 2 ? 'disabled' : ''}>Find the fair spot</button>
+      <p class="hint small fine">Travel times are estimates: real rail lines from OpenStreetMap in cities, average road and rail speeds between cities, and flights between major airports.</p>
     `;
   }
 
@@ -123,7 +124,11 @@ export function createSetup(root, { state, onChange, onFind, onPickOnMap, getBia
     const li = e.target.closest('.person');
     if (!li) return;
     const i = +li.dataset.i;
-    if (e.target.classList.contains('name')) { state.people[i].name = e.target.value || `Friend ${i}`; onChange(); }
+    if (e.target.classList.contains('name')) {
+      state.people[i].name = e.target.value || `Friend ${i}`;
+      li.querySelector('.avatar-sm').textContent = state.people[i].name.slice(0, 1).toUpperCase();
+      onChange();
+    }
     if (e.target.classList.contains('place')) suggest(li, i, e.target.value);
   });
 

@@ -4,41 +4,40 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Where Do I Meet My Homies</title>
-  <meta name="description" content="Find the fairest place to meet 1–10 friends with isochrone maps, then get AI ideas for what to do there." />
+  <meta name="description" content="Find the fairest place to meet 1–10 friends with isochrone maps, then get ideas for what to do there." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
 <body>
   <div id="map"></div>
 
   <header id="hud">
-    <ol id="steps"></ol>
-    <div id="clock" hidden>
-      <span class="clock-label">reach after</span>
-      <span class="clock-time">0:00</span>
+    <div id="status">
+      <ol id="steps"></ol>
+      <span id="step-label"></span>
+      <span id="clock" hidden></span>
     </div>
     <div id="toast" hidden></div>
   </header>
 
   <aside id="panel">
     <div class="brand">
-      <div class="logo">◎</div>
-      <div>
-        <h1>Where do I meet my homies?</h1>
-        <p class="tag">Grow everyone's travel-time bubbles. Meet where they overlap.</p>
-      </div>
+      <h1>Where do I meet my homies?</h1>
+      <p class="tag">Find the fairest place to meet, by real travel time.</p>
     </div>
     <section id="setup"></section>
     <section id="results" hidden></section>
   </aside>
 
+  <aside id="plans" hidden></aside>
+
   <footer id="player" hidden>
-    <button class="pl-btn" data-act="toggle" title="Pause / play">⏸</button>
+    <button class="pl-btn" data-act="toggle" title="Pause / play"></button>
     <div class="pl-label"></div>
     <input class="pl-scrub" type="range" min="0" max="1000" value="0" aria-label="Timeline" />
-    <button class="pl-btn" data-act="speed" title="Speed">1×</button>
-    <button class="pl-btn" data-act="skip" title="Skip to the end">⏭</button>
+    <button class="pl-btn txt" data-act="speed" title="Speed">1×</button>
+    <button class="pl-btn" data-act="skip" title="Skip to the end"></button>
   </footer>
 
   <script type="module" src="/src/main.js"></script>
