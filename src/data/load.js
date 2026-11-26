@@ -169,19 +169,53 @@ export async function locate(name, near, maxKm = 40) {
 }
 
 // Place search (Photon, OpenStreetMap-based).
-export async function searchPlaces(q, bias) {
+// Place search. Cities come first from the bundled list (instant, ranked by size), then
+// OpenStreetMap (Photon): towns and districts anywhere, then addresses and venues near the map view.
+const fold = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+let cityIndex = null;
+export async function searchCities(q, limit = 5) {
+  const f = fold(q);
+  if (f.length < 2) return [];
+  cityIndex ??= (await deps.loadCities()).map((c) => ({ c, key: fold(c[0]) }));
+  const hits = [];
+  for (const { c, key } of cityIndex) {
+    const rank = key === f ? 0 : key.startsWith(f) ? 1 : key.includes(' ' + f) ? 2 : -1;
+    if (rank >= 0) hits.push({ rank, c });
+  }
+  hits.sort((a, b) => a.rank - b.rank || b.c[5] - a.c[5]);
+  return hits.slice(0, limit).map(({ c }) => ({ name: c[0], sub: `City · ${c[1]}`, pos: [c[3], c[4]], kind: 'city' }));
+}
+
+function photonItem(f) {
+  const p = f.properties;
+  const sub = [p.city && p.city !== p.name ? p.city : '', p.state && p.state !== p.city && p.state !== p.name ? p.state : '', p.country].filter(Boolean).join(', ');
+  return { name: p.name || p.street || sub, sub, pos: f.geometry.coordinates };
+}
+async function photon(params) {
   const u = new URL('https://photon.komoot.io/api/');
-  u.searchParams.set('q', q);
-  u.searchParams.set('limit', '6');
-  if (bias) { u.searchParams.set('lon', bias[0].toFixed(3)); u.searchParams.set('lat', bias[1].toFixed(3)); }
+  for (const [k, v] of params) u.searchParams.append(k, v);
   const res = await fetch(u);
   if (!res.ok) return [];
-  const j = await res.json();
-  return j.features.map((f) => {
-    const p = f.properties;
-    const sub = [p.city && p.city !== p.name ? p.city : '', p.state && p.state !== p.city ? p.state : '', p.country].filter(Boolean).join(', ');
-    return { name: p.name || p.street || sub, sub, pos: f.geometry.coordinates };
-  });
+  return (await res.json()).features.map(photonItem);
+}
+
+export async function searchPlaces(q, bias) {
+  const near = bias ? [['lon', bias[0].toFixed(3)], ['lat', bias[1].toFixed(3)], ['location_bias_scale', '0.3']] : [];
+  const [cities, places, local] = await Promise.all([
+    searchCities(q).catch(() => []),
+    // cities, towns, districts anywhere in the world (no location bias)
+    photon([['q', q], ['limit', '5'], ['layer', 'city'], ['layer', 'district'], ['layer', 'locality'], ['layer', 'county'], ['layer', 'state']]).catch(() => []),
+    // stations, streets, venues: prefer ones near what the map shows
+    photon([['q', q], ['limit', '5'], ...near]).catch(() => []),
+  ]);
+  const out = [];
+  const close = (a, b) => Math.abs(a[0] - b[0]) < 0.3 && Math.abs(a[1] - b[1]) < 0.3;
+  for (const it of [...cities, ...places, ...local]) {
+    if (out.some((o) => fold(o.name) === fold(it.name) && close(o.pos, it.pos))) continue;
+    out.push(it);
+    if (out.length >= 8) break;
+  }
+  return out;
 }
 
 export async function reverseName(pos) {

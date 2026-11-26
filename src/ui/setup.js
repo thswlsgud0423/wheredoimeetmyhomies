@@ -1,5 +1,5 @@
 // "Who's coming" editor: you plus up to 10 friends, each with a start point and a way to travel.
-import { searchPlaces } from '../data/load.js';
+import { searchPlaces, searchCities } from '../data/load.js';
 import { MODES } from '../engine/fairness.js';
 import { ICONS, UI } from '../map/icons.js';
 
@@ -163,14 +163,12 @@ export function createSetup(root, { state, onChange, onFind, onPickOnMap, getBia
     clearTimeout(timer);
     const box = li.querySelector('.suggest');
     if (q.trim().length < 2) { box.hidden = true; return; }
-    timer = setTimeout(async () => {
-      const my = ++seq;
-      let items = [];
-      try { items = await searchPlaces(q, getBias()); } catch { /* offline */ }
-      if (my !== seq) return;
-      box.innerHTML = items.length
-        ? items.map((it, k) => `<li data-k="${k}"><b>${esc(it.name)}</b><span>${esc(it.sub)}</span></li>`).join('')
-        : '<li class="empty">No matches</li>';
+    let items = [];
+    const show = (list, done) => {
+      items = list;
+      box.innerHTML = list.length
+        ? list.map((it, k) => `<li data-k="${k}"><b>${esc(it.name)}</b><span>${esc(it.sub)}</span></li>`).join('') + (done ? '' : '<li class="empty">Searching…</li>')
+        : `<li class="empty">${done ? 'No matches. Try another spelling or pick on the map.' : 'Searching…'}</li>`;
       box.hidden = false;
       box.onclick = (ev) => {
         const row = ev.target.closest('li[data-k]');
@@ -179,6 +177,15 @@ export function createSetup(root, { state, onChange, onFind, onPickOnMap, getBia
         Object.assign(state.people[i], { pos: it.pos, place: it.name });
         render(); onChange();
       };
+    };
+    const my = ++seq;
+    // big cities from the bundled list show up right away
+    searchCities(q).then((list) => { if (my === seq && list.length) show(list, false); }).catch(() => {});
+    timer = setTimeout(async () => {
+      let list = [];
+      try { list = await searchPlaces(q, getBias()); } catch { /* offline */ }
+      if (my !== seq) return;
+      show(list, true);
     }, 280);
   }
 

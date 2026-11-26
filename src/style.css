@@ -56,6 +56,11 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
 .list { list-style: none; margin: 0; padding: 0; background: #fff; border-radius: 12px; overflow: hidden; }
 .list > li + li { border-top: 0.5px solid var(--sep); }
 .person { display: flex; gap: 10px; padding: 10px; align-items: flex-start; }
+/* the search dropdown must not be clipped by the rounded list */
+.people.list { overflow: visible; }
+.people.list > li:first-child { border-radius: 12px 12px 0 0; }
+.people.list > li:last-child { border-radius: 0 0 12px 12px; }
+.people .person:focus-within { position: relative; z-index: 20; }
 .avatar-sm { width: 28px; height: 28px; border-radius: 50%; background: var(--c); color: #fff; font-weight: 600; font-size: 13px; display: grid; place-items: center; flex: none; }
 .person .avatar-sm { margin-top: 3px; }
 .person-main { flex: 1; min-width: 0; }
@@ -66,7 +71,7 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
 .where .place { flex: 1; min-width: 0; padding: 6px 9px; }
 .icon-btn { border: 0; background: none; padding: 6px; border-radius: 8px; color: var(--text-2); }
 .icon-btn:hover { background: var(--fill-2); color: var(--text); }
-.suggest { position: absolute; z-index: 10; top: 36px; left: 0; right: 0; list-style: none; margin: 0; padding: 4px;
+.suggest { position: absolute; z-index: 30; top: 36px; left: 0; right: 0; max-height: 320px; overflow-y: auto; list-style: none; margin: 0; padding: 4px;
   background: #fff; border-radius: 12px; box-shadow: var(--shadow); }
 .suggest li { padding: 7px 9px; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; }
 .suggest li:hover { background: var(--fill-2); }
