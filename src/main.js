@@ -346,10 +346,12 @@ async function selectPlace(c, { first = false } = {}) {
   clock(null);
   $('#panel').scrollTo({ top: 0, behavior: first ? 'auto' : 'smooth' });
 
+  // Picking a spot (bar, map pin, list or mode) always shows what to do there on the right.
+  // The very first pick waits until everyone has arrived, so the trips stay in view.
+  if (!first || plans.isOpen) openPlans();
   const zoom = { city: 14.6, region: 8.5, world: 4.5 }[plan.tier];
   map.flyTo({ center: c.pos, zoom, pitch: plan.tier === 'world' ? 30 : 55, bearing: map.getBearing() + 25, duration: first ? 2400 : 1600, padding: pad(), essential: true });
   toast(`<b>${esc(placeTitle(c))}</b> · longest trip ${fmtMinutes(c.stats.max)}`);
-  if (plans.isOpen) openPlans();
 }
 
 function drawRoutes(legs) {
