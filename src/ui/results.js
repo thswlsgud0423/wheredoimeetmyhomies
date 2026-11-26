@@ -1,9 +1,10 @@
 // Left: the fair spot per mode and everyone's trip. Right: plans for what to do there.
 import { MODES } from '../engine/fairness.js';
-import { fmtMinutes } from '../geo.js';
+import { fmtMinutes, fmtKm } from '../geo.js';
 import { ICONS, UI } from '../map/icons.js';
 import { MODE_NAME } from '../map/journey.js';
 import { esc } from './setup.js';
+import { VIBES, sections, dayPlan } from '../data/guide.js';
 
 export function placeTitle(c) {
   if (!c) return '';
@@ -17,14 +18,6 @@ export function placeSub(c) {
   }
   if (c.kind === 'city') return `${c.country}${c.pop ? ' · ' + (c.pop >= 1e6 ? (c.pop / 1e6).toFixed(1) + 'M' : Math.round(c.pop / 1e3) + 'k') + ' people' : ''}`;
   return 'Area';
-}
-
-export const VIBES = ['Food', 'Nightlife', 'Cafés', 'Culture', 'Nature', 'Shopping', 'Activities', 'Photo spots', 'Chill', 'Rainy day'];
-const LANGS = ['English', '한국어', '日本語', '中文', 'Español', 'Français', 'Deutsch'];
-
-export function seasonFor(lat, date = new Date()) {
-  const north = ['Winter', 'Winter', 'Spring', 'Spring', 'Spring', 'Summer', 'Summer', 'Summer', 'Autumn', 'Autumn', 'Autumn', 'Winter'][date.getMonth()];
-  return lat >= 0 ? north : { Winter: 'Summer', Summer: 'Winter', Spring: 'Autumn', Autumn: 'Spring' }[north];
 }
 
 function legChip(l) {
@@ -108,138 +101,80 @@ export function createResults(root, h) {
   };
 }
 
-// ---------- right panel: plans ----------
+// ---------- right panel: what to do there (Wikivoyage + Wikipedia, no AI) ----------
+const KIND_LABEL = { see: 'Sight', do: 'Do', buy: 'Shop', eat: 'Eat', drink: 'Drink' };
+const BUDGET_SIGN = { Low: '$', Medium: '$$', High: '$$$' };
+
 export function createPlans(root, h) {
-  let prefs = null, place = null;
+  let prefs = null, place = null, guide = null, arriveAt = 0, shown = [];
 
   function render() {
     root.innerHTML = `
       <div class="plans-head">
         <div>
-          <div class="kicker">Plans near</div>
+          <div class="kicker">What to do near</div>
           <h2>${esc(place)}</h2>
         </div>
-        <button class="icon-btn close" aria-label="Close plans">${UI.close}</button>
+        <button class="icon-btn close" aria-label="Close">${UI.close}</button>
       </div>
-      <div class="prefs">
-        <label>Season<select class="p-season">${['Spring', 'Summer', 'Autumn', 'Winter'].map((s) => `<option ${s === prefs.season ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
-        <label>Budget<select class="p-budget">${['Low', 'Medium', 'High'].map((s) => `<option ${s === prefs.budget ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
-        <label>Language<select class="p-lang">${LANGS.map((s) => `<option ${s === prefs.lang ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
+      <div class="budget-row"><span class="hint small">Budget</span>
+        <div class="seg small-text">${['Low', 'Medium', 'High'].map((b) => `<button class="${prefs.budget === b ? 'on' : ''}" data-budget="${b}">${BUDGET_SIGN[b]}</button>`).join('')}</div>
       </div>
-      <div class="vibes">${VIBES.map((v) => `<button class="chip ${prefs.vibes.includes(v) ? 'on' : ''}" data-vibe="${esc(v)}">${v}</button>`).join('')}</div>
-      <textarea class="p-notes" rows="2" placeholder="Anything else? A vegetarian friend, a birthday, love karaoke…">${esc(prefs.notes)}</textarea>
-      <button class="secondary ask">${UI.sparkle} Update plans</button>
-      <div class="plans-out"></div>
+      <div class="vibes">${Object.keys(VIBES).map((v) => `<button class="chip ${prefs.vibes.includes(v) ? 'on' : ''}" data-vibe="${esc(v)}">${esc(v)}</button>`).join('')}</div>
+      <div class="plans-out">${guide ? '' : '<div class="loading"><span></span>Reading travel guides for this area…</div>'}</div>
     `;
+    if (guide) fill();
+  }
+
+  function fill() {
+    const out = root.querySelector('.plans-out');
+    const secs = sections(guide.items, prefs, guide.radius);
+    const plan = dayPlan(secs, arriveAt);
+    shown = [];
+    const card = (it) => {
+      const k = shown.push(it) - 1;
+      const meta = [
+        it.dist != null ? `${fmtKm(it.dist)} away` : '',
+        it.budget ? BUDGET_SIGN[it.budget] : '',
+        it.price && it.price.length < 40 ? it.price : '',
+      ].filter(Boolean).map(esc).join(' · ');
+      return `<li class="spot" data-k="${k}" title="Show on the map">
+        ${it.img ? `<img src="${esc(it.img)}" alt="" loading="lazy" />` : `<span class="spot-ph">${UI.pin}</span>`}
+        <div class="spot-body">
+          <div class="spot-top"><b>${esc(it.name)}</b>${it.alt && it.alt !== it.name && it.alt.length < 40 ? ` <span class="hint small">${esc(it.alt)}</span>` : ''}</div>
+          ${it.desc ? `<p>${esc(it.desc)}</p>` : ''}
+          <small class="hint">${meta}</small>
+          <span class="spot-links">${it.url ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">Website</a>` : ''}${it.wiki ? `<a href="${esc(it.wiki)}" target="_blank" rel="noopener">Wikipedia</a>` : ''}</span>
+        </div>
+      </li>`;
+    };
+    out.innerHTML = !secs.length
+      ? '<p class="note">The travel guides have nothing listed right around here. Try a nearby option from the bar below, or pick other vibes.</p>'
+      : `${plan.length ? `<div class="group-head"><h2>A simple plan</h2><span class="hint small">after everyone arrives</span></div>
+          <ol class="timeline">${plan.map((p) => `<li data-k="${shown.push(p.it) - 1}"><b>${esc(p.time)}</b><span><em>${esc(p.label)}</em> ${esc(p.it.name)}</span></li>`).join('')}</ol>` : ''}
+        ${secs.map((s) => `<div class="group-head"><h2>${esc(s.title)}</h2></div><ul class="list spots">${s.items.map(card).join('')}</ul>`).join('')}
+        <p class="hint small fine">Recommendations from travelers on ${guide.guides.map((g) => `<a href="https://en.wikivoyage.org/wiki/${encodeURIComponent(g.title.replace(/ /g, '_'))}" target="_blank" rel="noopener">Wikivoyage: ${esc(g.title)}</a>`).join(', ') || 'Wikivoyage'} and photos from Wikipedia / Wikimedia Commons (CC BY-SA). Check opening hours before you go.</p>`;
   }
 
   root.addEventListener('click', (e) => {
-    const t = e.target.closest('button');
+    if (e.target.closest('a')) return;
+    const t = e.target.closest('button, .spot, .timeline li');
     if (!t) return;
     if (t.classList.contains('close')) return h.onClose();
+    if (t.dataset.budget) { prefs.budget = t.dataset.budget; render(); return; }
     if (t.dataset.vibe) {
       const v = t.dataset.vibe, list = prefs.vibes;
       list.includes(v) ? list.splice(list.indexOf(v), 1) : list.push(v);
-      t.classList.toggle('on');
+      render();
       return;
     }
-    if (t.classList.contains('ask')) { read(); h.onAsk(prefs); }
+    if (t.dataset.k != null) h.onShow(shown[+t.dataset.k]);
   });
-  function read() {
-    prefs.season = root.querySelector('.p-season').value;
-    prefs.budget = root.querySelector('.p-budget').value;
-    prefs.lang = root.querySelector('.p-lang').value;
-    prefs.notes = root.querySelector('.p-notes').value;
-  }
 
   return {
-    open(placeName, p) { place = placeName; prefs = p; render(); root.hidden = false; },
+    open(placeName, p, at) { place = placeName; prefs = p; arriveAt = at; guide = null; render(); root.hidden = false; },
+    setGuide(g) { guide = g; if (!root.hidden) render(); },
     close() { root.hidden = true; },
-    get out() { return root.querySelector('.plans-out'); },
     get isOpen() { return !root.hidden; },
   };
-}
-
-const CAT = { food: 'Food', drinks: 'Drinks', cafe: 'Café', sights: 'Sights', culture: 'Culture', nature: 'Nature', shopping: 'Shopping', activity: 'Activity', nightlife: 'Nightlife', event: 'Event', stay: 'Stay' };
-
-// Match a model pick to a known place ("Myeongdong Kyoja (명동교자)" matches "명동교자").
-function matcher(places) {
-  const norm = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
-  const idx = new Map();
-  for (const p of places) for (const n of [p.name, p.nameEn]) if (n && !idx.has(norm(n))) idx.set(norm(n), p);
-  return (name) => {
-    const parts = [name, ...String(name).split(/[()（）,/·]/)].map(norm).filter((s) => s.length > 1);
-    for (const s of parts) if (idx.has(s)) return idx.get(s);
-    return null;
-  };
-}
-
-const KIND = {
-  attraction: 'Sight', museum: 'Museum', gallery: 'Gallery', viewpoint: 'Viewpoint', theme_park: 'Theme park', zoo: 'Zoo', aquarium: 'Aquarium',
-  historic: 'Historic', place_of_worship: 'Church / temple', theatre: 'Theatre', arts_centre: 'Arts', concert_hall: 'Concerts', park: 'Park', garden: 'Garden',
-  restaurant: 'Restaurant', cafe: 'Café', bar: 'Bar', pub: 'Pub', biergarten: 'Beer garden', marketplace: 'Market', food_court: 'Food hall', ice_cream: 'Ice cream',
-  bakery: 'Bakery', confectionery: 'Sweets', pastry: 'Pastry', chocolate: 'Chocolate', department_store: 'Department store', mall: 'Mall', tower: 'Tower', stadium: 'Stadium',
-};
-const FOOD = /restaurant|cafe|bar|pub|biergarten|marketplace|food_court|ice_cream|bakery|confectionery|pastry|chocolate/;
-
-export function renderIdeas(out, data, places, onShow) {
-  const find = matcher(places);
-  const picks = data.picks.map((p) => ({ ...p, known: find(p.place_name) || find(p.title) }));
-  out.innerHTML = `
-    <p class="summary"><b>${esc(data.headline)}</b> ${esc(data.summary)}</p>
-    <ul class="list picks">
-      ${picks.map((p, k) => `
-        <li class="pick" data-k="${k}" title="Show on the map">
-          ${p.known?.img ? `<img class="pick-img" src="${esc(p.known.img)}" alt="" loading="lazy" />` : ''}
-          <div class="pick-top"><span class="cat cat-${esc(p.category)}">${CAT[p.category] || esc(p.category)}</span><span class="hint">${esc(p.cost)}</span></div>
-          <b>${esc(p.title)}</b>
-          ${p.badge ? `<span class="badge">${esc(p.badge)}</span>` : ''}
-          <div class="pick-place">${UI.pin}${esc(p.place_name)}</div>
-          <p>${esc(p.why)}</p>
-          <small class="hint">${esc(p.when)}</small>
-        </li>`).join('')}
-    </ul>
-    ${data.day_plan?.length ? `<div class="group-head"><h2>Day plan</h2></div><ol class="timeline">${data.day_plan.map((d) => `<li><b>${esc(d.time)}</b><span>${esc(d.activity)}</span></li>`).join('')}</ol>` : ''}
-    ${data.tips?.length ? `<div class="group-head"><h2>Tips</h2></div><ul class="tips">${data.tips.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}
-    <p class="hint small fine">Ideas by ${esc(data.model || 'Claude')}. Check opening hours and prices before you go.</p>
-  `;
-  out.querySelectorAll('.pick').forEach((li) => li.addEventListener('click', () => {
-    const p = picks[+li.dataset.k];
-    onShow(p.known || { query: p.place_name, name: p.place_name });
-  }));
-}
-
-function famousCard(p, k) {
-  return `<li class="famous" data-k="${k}" title="Show on the map">
-    ${p.img ? `<img src="${esc(p.img)}" alt="" loading="lazy" />` : `<span class="famous-ph">${UI.pin}</span>`}
-    <div><b>${esc(p.nameEn && p.nameEn !== p.name ? p.nameEn : p.name)}</b>
-    ${p.nameEn && p.nameEn !== p.name ? `<span class="hint small">${esc(p.name)}</span>` : ''}
-    <small class="hint">${esc(KIND[p.kind] || p.kind.replace(/_/g, ' '))}${p.desc ? ' · ' + esc(p.desc) : ''}</small>
-    ${p.url ? `<a class="wiki" href="${esc(p.url)}" target="_blank" rel="noopener">Wikipedia</a>` : ''}</div>
-  </li>`;
-}
-
-const GROUPS = [
-  ['Food & drink nearby', /restaurant|cafe|bar|pub|ice_cream|food_court/],
-  ['Parks', /park|garden/],
-  ['Shopping & fun', /mall|department_store|books|bowling|escape|arcade/],
-];
-
-export function renderPoiFallback(out, message, famous, pois, onShow) {
-  const sights = famous.filter((p) => !FOOD.test(p.kind)).slice(0, 12);
-  const eats = famous.filter((p) => FOOD.test(p.kind)).slice(0, 8);
-  const all = [...sights, ...eats];
-  const famousNames = new Set(famous.map((p) => p.name));
-  const rest = pois.filter((p) => !famousNames.has(p.name));
-  out.innerHTML = `<p class="note">${esc(message)}</p>`
-    + (sights.length ? `<div class="group-head"><h2>Must-see</h2><span class="hint small">famous nearby</span></div><ul class="list famous-list">${sights.map((p, k) => famousCard(p, k)).join('')}</ul>` : '')
-    + (eats.length ? `<div class="group-head"><h2>Famous food &amp; cafés</h2></div><ul class="list famous-list">${eats.map((p, k) => famousCard(p, sights.length + k)).join('')}</ul>` : '')
-    + GROUPS.map(([label, re]) => {
-      const list = rest.filter((p) => re.test(p.kind)).slice(0, 6);
-      if (!list.length) return '';
-      return `<div class="group-head"><h2>${label}</h2></div><ul class="list poi-list">${list.map((p) => `<li data-n="${esc(p.name)}"><b>${esc(p.name)}</b>${p.nameEn && p.nameEn !== p.name ? ` <span class="hint">${esc(p.nameEn)}</span>` : ''}<small class="hint">${esc(p.cuisine || p.kind.replace(/_/g, ' '))}</small></li>`).join('')}</ul>`;
-    }).join('')
-    + (!all.length && !rest.length ? '<p class="hint">No places found nearby in OpenStreetMap.</p>' : '');
-  out.querySelectorAll('.famous').forEach((li) => li.addEventListener('click', (e) => { if (!e.target.closest('a')) onShow(all[+li.dataset.k]); }));
-  out.querySelectorAll('.poi-list li').forEach((li) => li.addEventListener('click', () => onShow(rest.find((p) => p.name === li.dataset.n))));
 }

@@ -8,9 +8,10 @@ import { createJourney, prepareLegs } from './map/journey.js';
 import { buildPlan } from './engine/plan.js';
 import { routeTree } from './engine/tree.js';
 import { MODES } from './engine/fairness.js';
-import { deps, nearbyPlaces, famousPlaces, locate, reverseName } from './data/load.js';
+import { deps, locate, reverseName } from './data/load.js';
 import { createSetup, SAMPLES, COLORS, esc } from './ui/setup.js';
-import { createResults, createPlans, renderIdeas, renderPoiFallback, placeTitle, seasonFor } from './ui/results.js';
+import { createResults, createPlans, placeTitle } from './ui/results.js';
+import { loadGuide } from './data/guide.js';
 import { createPlayer } from './ui/player.js';
 import { fmtClock, fmtMinutes, haversine } from './geo.js';
 
@@ -134,7 +135,7 @@ const results = createResults($('#results'), {
 });
 const plans = createPlans($('#plans'), {
   onClose: () => plans.close(),
-  onAsk: (p) => askPlans(p),
+  onShow: (it) => showSpot(it),
 });
 
 ready.then(() => { drawPeople(); fitPeople({ duration: 2500 }); });
@@ -168,7 +169,7 @@ async function find() {
   const chosen = {};
   for (const m of Object.keys(MODES)) chosen[m] = plan.ranked[m][0];
   const best = chosen[state.mode] || chosen.minimax;
-  prefs = defaultPrefs(best?.pos ?? people[0].pos);
+  prefs = defaultPrefs();
   if (!best) {
     toast('No place everyone can reach. Try a different way to travel.', 6000);
     showResults(chosen);
@@ -431,84 +432,42 @@ function backToSetup() {
   fitPeople();
 }
 
-// ---------- 4. plans (right panel) ----------
-function defaultPrefs(pos) {
-  return { season: seasonFor(pos[1]), budget: 'Medium', lang: navigator.language?.startsWith('ko') ? '한국어' : 'English', vibes: ['Food'], notes: '' };
+// ---------- 4. what to do there (right panel) ----------
+function defaultPrefs() {
+  return { budget: 'Medium', vibes: ['Food', 'Cafés', 'Culture'] };
 }
 
 function openPlans() {
   const v = results.view;
   const c = v.chosen[v.mode];
   setStep('plans');
-  if (plans.isOpen && plansKey.startsWith(c.id + '|')) return; // already showing this place
-  prefs.season = seasonFor(c.pos[1]);
-  plans.open(placeTitle(c), prefs);
-  askPlans(prefs);
+  if (plans.isOpen && plansKey === c.id) return; // already showing this place
+  plansKey = c.id;
+  plans.open(placeTitle(c), prefs, Date.now() + c.stats.max * 60000);
+  prefetchPlaces(c).then((g) => { if (plansKey === c.id) plans.setGuide(g); });
 }
 
-async function askPlans(p) {
-  const v = results.view;
-  const c = v.chosen[v.mode];
-  const out = plans.out;
-  const key = c.id + '|' + Date.now();
-  plansKey = key;
-  out.innerHTML = '<div class="loading"><span></span>Looking for the famous spots around here…</div>';
-  const { pois, famous } = await prefetchPlaces(c);
-  if (key !== plansKey) return;
-  out.innerHTML = `<div class="loading"><span></span>Found ${famous.length} famous places nearby. Writing plans…</div>`;
-  const body = {
-    tier: plan.tier,
-    place: { name: placeTitle(c), country: c.country || '', lng: c.pos[0], lat: c.pos[1] },
-    people: plan.people.map((person, i) => ({
-      name: person.name,
-      minutes: Math.round(c.times[i]),
-      how: [...new Set((v.legs[i] || []).map((l) => l.mode))].join(' + ') || person.mode,
-    })),
-    prefs: { ...p, budget: p.budget.toLowerCase() },
-    pois: pois.slice(0, 60).map(({ name, nameEn, kind, cuisine }) => ({ name, nameEn, kind, cuisine })),
-    famous: famous.slice(0, 40).map(({ name, nameEn, kind, desc }) => ({ name, nameEn, kind, desc })),
-  };
-  const show = async (poi) => {
-    if (!poi) return;
-    let pos = poi.lng != null ? [poi.lng, poi.lat] : null;
-    if (!pos && poi.query) {
-      toast(`Looking up <b>${esc(poi.name)}</b>…`, 2000);
-      const hit = (await locate(poi.query, c.pos, plan.tier === 'city' ? 15 : 60))
-        || (await locate(poi.query.replace(/\s*[(（].*$/, ''), c.pos, plan.tier === 'city' ? 15 : 60));
-      if (!hit) { toast(`Couldn't find <b>${esc(poi.name)}</b> on the map`, 2500); return; }
-      pos = hit.pos;
-    }
-    setData(map, 'pois', { type: 'FeatureCollection', features: [{ type: 'Feature', properties: { name: poi.nameEn || poi.name }, geometry: { type: 'Point', coordinates: pos } }] });
-    map.flyTo({ center: pos, zoom: Math.max(map.getZoom(), 16), pitch: 55, duration: 1400, padding: pad() });
-  };
-  const places = [...famous, ...pois];
-  try {
-    const res = await fetch('/api/recommend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const data = await res.json().catch(() => ({}));
-    if (key !== plansKey) return;
-    if (!res.ok) {
-      const msg = data.error === 'no-key'
-        ? 'Add an Anthropic API key (ANTHROPIC_API_KEY in .env) for personal plans with famous food and local tips. For now, here are the best-known places nearby.'
-        : `Plans are unavailable right now (${data.error || res.status}). Here are the best-known places nearby.`;
-      renderPoiFallback(out, msg, famous, pois, show);
-    } else renderIdeas(out, data, places, show);
-  } catch (err) {
-    if (key !== plansKey) return;
-    renderPoiFallback(out, `Could not reach the plans service (${err.message}). Here are the best-known places nearby.`, famous, pois, show);
+async function showSpot(it) {
+  if (!it) return;
+  let pos = it.lng != null ? [it.lng, it.lat] : null;
+  if (!pos) {
+    const c = results.view.chosen[results.view.mode];
+    toast(`Looking up <b>${esc(it.name)}</b>…`, 2000);
+    const hit = await locate(it.name, c.pos, plan.tier === 'city' ? 10 : 40);
+    if (!hit) { toast(`Couldn't find <b>${esc(it.name)}</b> on the map`, 2500); return; }
+    pos = hit.pos;
   }
+  setData(map, 'pois', { type: 'FeatureCollection', features: [{ type: 'Feature', properties: { name: it.name }, geometry: { type: 'Point', coordinates: pos } }] });
+  map.flyTo({ center: pos, zoom: Math.max(map.getZoom(), 16), pitch: 55, duration: 1400, padding: pad() });
 }
 
-// Start looking up places as soon as a spot is picked, so the list is ready when the trips end.
+// Start reading the guides as soon as a spot is picked, so the list is ready when the trips end.
 const placeCache = new Map();
 function prefetchPlaces(c) {
   if (!placeCache.has(c.id)) {
-    const city = plan.tier === 'city';
-    const p = Promise.all([
-      nearbyPlaces(c.pos, city ? 900 : 2500),
-      famousPlaces(c.pos, city ? 2500 : 6000),
-    ]).then(([pois, famous]) => {
-      if (!pois.length && !famous.length) placeCache.delete(c.id); // let a later try fetch again
-      return { pois, famous };
+    const p = loadGuide(c.pos, plan.tier).then((g) => {
+      if (!g.items.length) placeCache.delete(c.id); // let a later try fetch again
+      return g;
     });
     placeCache.set(c.id, p);
   }

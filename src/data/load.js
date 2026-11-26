@@ -1,5 +1,5 @@
 // Browser-side data loaders handed to the engine. Big files load only when needed.
-import { fetchRail, overpass, poiQuery, parsePois } from '../engine/transit.js';
+import { fetchRail, overpass } from '../engine/transit.js';
 
 const inside = (outer, inner) => inner[0] >= outer[0] && inner[1] >= outer[1] && inner[2] <= outer[2] && inner[3] <= outer[3];
 
@@ -33,18 +33,13 @@ export const deps = {
   },
 };
 
-export async function nearbyPlaces(pos, radius) {
-  const get = overpass(poiQuery(pos, radius), { timeoutMs: 15000 }).then(parsePois).catch(() => []);
-  return withTimeout(get, 18000, []);
-}
-
 // Famous places near a point: real places in OpenStreetMap that have a Wikipedia article
 // (landmarks, museums, palaces, parks, legendary cafés and restaurants), ranked by how much
 // Wikipedia has to say about them, with a photo when there is one.
 // Two sources, merged: Wikipedia's own geo search (fast, ~1 s) and OpenStreetMap objects that link
 // to Wikipedia (slower, but it knows which ones are restaurants, cafés and parks).
 export async function famousPlaces(pos, radius) {
-  const [wiki, osm] = await Promise.all([wikiNearby(pos, radius), withTimeout(osmFamous(pos, radius), 14000, [])]);
+  const [wiki, osm] = await Promise.all([wikiNearby(pos, radius), withTimeout(osmFamous(pos, radius), 8000, [])]);
   const seen = new Set();
   const norm = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
   return [...osm, ...wiki]
@@ -100,7 +95,7 @@ async function wikiNearby(pos, radius) {
 
 async function osmFamous(pos, radius) {
   let list = [];
-  try { list = parseFamous(await overpass(famousQuery(pos, radius), { timeoutMs: 14000 })); }
+  try { list = parseFamous(await overpass(famousQuery(pos, radius), { timeoutMs: 8000 })); }
   catch { return []; }
   const byLang = new Map();
   for (const p of list) {

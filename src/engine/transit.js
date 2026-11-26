@@ -81,32 +81,3 @@ export function parseRail(json) {
 export async function fetchRail(bbox, opts) {
   return parseRail(await overpass(railQuery(bbox), opts));
 }
-
-// Places worth meeting at, near a point (for recommendations).
-export function poiQuery([lng, lat], radius = 700) {
-  const a = `(around:${radius},${lat},${lng})`;
-  return `[out:json][timeout:30];(
-node["amenity"~"^(restaurant|cafe|bar|pub|ice_cream|food_court)$"]["name"]${a};
-node["tourism"~"^(attraction|museum|gallery|viewpoint|theme_park|zoo|aquarium)$"]["name"]${a};
-way["tourism"~"^(attraction|museum|gallery|theme_park|zoo|aquarium)$"]["name"]${a};
-way["leisure"~"^(park|garden)$"]["name"]${a};
-node["shop"~"^(mall|department_store|books)$"]["name"]${a};
-way["shop"~"^(mall|department_store)$"]["name"]${a};
-node["leisure"~"^(bowling_alley|escape_game|amusement_arcade)$"]["name"]${a};
-);out center 120;`;
-}
-
-export function parsePois(json) {
-  const seen = new Set();
-  const out = [];
-  for (const el of json.elements || []) {
-    const t = el.tags || {};
-    if (!t.name || seen.has(t.name)) continue;
-    seen.add(t.name);
-    const lat = el.lat ?? el.center?.lat, lng = el.lon ?? el.center?.lon;
-    if (lat == null) continue;
-    const kind = t.amenity || t.tourism || t.leisure || t.shop || 'place';
-    out.push({ name: t.name, nameEn: t['name:en'] || '', kind, cuisine: t.cuisine || '', lng, lat });
-  }
-  return out;
-}
