@@ -19,8 +19,8 @@ npm run dev
 ```
 Without a key, the ideas section lists real places near the spot instead.
 
-- `npm test` runs the engine tests (Seoul subway, East Asia flights, Europe, across the Pacific).
-- `npm run data` rebuilds `src/data/` (airports, cities, bundled Seoul rail network).
+- `npm test` runs the engine tests (Vienna U-Bahn/tram, Seoul subway, East Asia flights, Europe, across the Pacific).
+- `npm run data` rebuilds `src/data/` (airports, cities, bundled Vienna and Seoul rail networks); `node scripts/build-data.mjs vienna` rebuilds one city.
 
 ## How it works
 - **Engine** (`src/engine/`): a web-mercator grid around the friends + rail stops + airports form one graph. Dijkstra from each person gives minutes to every cell. Candidate places (stations in a city, real cities otherwise) are scored in all three modes.

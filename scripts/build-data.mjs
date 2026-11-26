@@ -62,4 +62,16 @@ async function seoulRail() {
   console.log('seoul lines', lines.length, 'stops', lines.reduce((s, l) => s + l.stops.length, 0));
 }
 
-await Promise.all([airports(), cities(), seoulRail()]);
+// Bundled city rail networks (subway, S-Bahn, tram) so the default examples load instantly.
+export const BUNDLED = {
+  vienna: [16.0, 47.95, 16.75, 48.45],
+};
+async function bundledRail(name, bbox) {
+  const lines = await fetchRail(bbox, { timeoutMs: 120000 });
+  await writeFile(new URL(`${name}-rail.json`, out), JSON.stringify({ bbox, lines }));
+  console.log(name, 'lines', lines.length, 'stops', lines.reduce((s, l) => s + l.stops.length, 0));
+}
+
+const only = process.argv[2];
+if (only) await bundledRail(only, BUNDLED[only]);
+else await Promise.all([airports(), cities(), seoulRail(), ...Object.entries(BUNDLED).map(([k, b]) => bundledRail(k, b))]);

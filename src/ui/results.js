@@ -162,16 +162,39 @@ export function createPlans(root, h) {
 
 const CAT = { food: 'Food', drinks: 'Drinks', cafe: 'Café', sights: 'Sights', culture: 'Culture', nature: 'Nature', shopping: 'Shopping', activity: 'Activity', nightlife: 'Nightlife', event: 'Event', stay: 'Stay' };
 
-export function renderIdeas(out, data, pois, onShow) {
-  const byName = new Map(pois.map((p) => [p.name, p]));
+// Match a model pick to a known place ("Myeongdong Kyoja (명동교자)" matches "명동교자").
+function matcher(places) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  const idx = new Map();
+  for (const p of places) for (const n of [p.name, p.nameEn]) if (n && !idx.has(norm(n))) idx.set(norm(n), p);
+  return (name) => {
+    const parts = [name, ...String(name).split(/[()（）,/·]/)].map(norm).filter((s) => s.length > 1);
+    for (const s of parts) if (idx.has(s)) return idx.get(s);
+    return null;
+  };
+}
+
+const KIND = {
+  attraction: 'Sight', museum: 'Museum', gallery: 'Gallery', viewpoint: 'Viewpoint', theme_park: 'Theme park', zoo: 'Zoo', aquarium: 'Aquarium',
+  historic: 'Historic', place_of_worship: 'Church / temple', theatre: 'Theatre', arts_centre: 'Arts', concert_hall: 'Concerts', park: 'Park', garden: 'Garden',
+  restaurant: 'Restaurant', cafe: 'Café', bar: 'Bar', pub: 'Pub', biergarten: 'Beer garden', marketplace: 'Market', food_court: 'Food hall', ice_cream: 'Ice cream',
+  bakery: 'Bakery', confectionery: 'Sweets', pastry: 'Pastry', chocolate: 'Chocolate', department_store: 'Department store', mall: 'Mall', tower: 'Tower', stadium: 'Stadium',
+};
+const FOOD = /restaurant|cafe|bar|pub|biergarten|marketplace|food_court|ice_cream|bakery|confectionery|pastry|chocolate/;
+
+export function renderIdeas(out, data, places, onShow) {
+  const find = matcher(places);
+  const picks = data.picks.map((p) => ({ ...p, known: find(p.place_name) || find(p.title) }));
   out.innerHTML = `
     <p class="summary"><b>${esc(data.headline)}</b> ${esc(data.summary)}</p>
     <ul class="list picks">
-      ${data.picks.map((p, k) => `
-        <li class="pick ${byName.has(p.place_name) ? 'mappable' : ''}" data-k="${k}">
+      ${picks.map((p, k) => `
+        <li class="pick" data-k="${k}" title="Show on the map">
+          ${p.known?.img ? `<img class="pick-img" src="${esc(p.known.img)}" alt="" loading="lazy" />` : ''}
           <div class="pick-top"><span class="cat cat-${esc(p.category)}">${CAT[p.category] || esc(p.category)}</span><span class="hint">${esc(p.cost)}</span></div>
           <b>${esc(p.title)}</b>
-          <div class="pick-place">${esc(p.place_name)}${byName.has(p.place_name) ? ' · show on map' : ''}</div>
+          ${p.badge ? `<span class="badge">${esc(p.badge)}</span>` : ''}
+          <div class="pick-place">${UI.pin}${esc(p.place_name)}</div>
           <p>${esc(p.why)}</p>
           <small class="hint">${esc(p.when)}</small>
         </li>`).join('')}
@@ -180,21 +203,43 @@ export function renderIdeas(out, data, pois, onShow) {
     ${data.tips?.length ? `<div class="group-head"><h2>Tips</h2></div><ul class="tips">${data.tips.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}
     <p class="hint small fine">Ideas by ${esc(data.model || 'Claude')}. Check opening hours and prices before you go.</p>
   `;
-  out.querySelectorAll('.pick.mappable').forEach((li) => li.addEventListener('click', () => onShow(byName.get(data.picks[+li.dataset.k].place_name))));
+  out.querySelectorAll('.pick').forEach((li) => li.addEventListener('click', () => {
+    const p = picks[+li.dataset.k];
+    onShow(p.known || { query: p.place_name, name: p.place_name });
+  }));
+}
+
+function famousCard(p, k) {
+  return `<li class="famous" data-k="${k}" title="Show on the map">
+    ${p.img ? `<img src="${esc(p.img)}" alt="" loading="lazy" />` : `<span class="famous-ph">${UI.pin}</span>`}
+    <div><b>${esc(p.nameEn && p.nameEn !== p.name ? p.nameEn : p.name)}</b>
+    ${p.nameEn && p.nameEn !== p.name ? `<span class="hint small">${esc(p.name)}</span>` : ''}
+    <small class="hint">${esc(KIND[p.kind] || p.kind.replace(/_/g, ' '))}${p.desc ? ' · ' + esc(p.desc) : ''}</small>
+    ${p.url ? `<a class="wiki" href="${esc(p.url)}" target="_blank" rel="noopener">Wikipedia</a>` : ''}</div>
+  </li>`;
 }
 
 const GROUPS = [
-  ['Food & drink', /restaurant|cafe|bar|pub|ice_cream|food_court/],
-  ['Sights & culture', /attraction|museum|gallery|viewpoint|theme_park|zoo|aquarium/],
+  ['Food & drink nearby', /restaurant|cafe|bar|pub|ice_cream|food_court/],
   ['Parks', /park|garden/],
   ['Shopping & fun', /mall|department_store|books|bowling|escape|arcade/],
 ];
 
-export function renderPoiFallback(out, message, pois, onShow) {
-  out.innerHTML = `<p class="note">${esc(message)}</p>` + (pois.length ? GROUPS.map(([label, re]) => {
-    const list = pois.filter((p) => re.test(p.kind)).slice(0, 8);
-    if (!list.length) return '';
-    return `<div class="group-head"><h2>${label}</h2></div><ul class="list poi-list">${list.map((p) => `<li data-n="${esc(p.name)}"><b>${esc(p.name)}</b>${p.nameEn && p.nameEn !== p.name ? ` <span class="hint">${esc(p.nameEn)}</span>` : ''}<small class="hint">${esc(p.cuisine || p.kind.replace(/_/g, ' '))}</small></li>`).join('')}</ul>`;
-  }).join('') : '<p class="hint">No places found nearby in OpenStreetMap.</p>');
-  out.querySelectorAll('.poi-list li').forEach((li) => li.addEventListener('click', () => onShow(pois.find((p) => p.name === li.dataset.n))));
+export function renderPoiFallback(out, message, famous, pois, onShow) {
+  const sights = famous.filter((p) => !FOOD.test(p.kind)).slice(0, 12);
+  const eats = famous.filter((p) => FOOD.test(p.kind)).slice(0, 8);
+  const all = [...sights, ...eats];
+  const famousNames = new Set(famous.map((p) => p.name));
+  const rest = pois.filter((p) => !famousNames.has(p.name));
+  out.innerHTML = `<p class="note">${esc(message)}</p>`
+    + (sights.length ? `<div class="group-head"><h2>Must-see</h2><span class="hint small">famous nearby</span></div><ul class="list famous-list">${sights.map((p, k) => famousCard(p, k)).join('')}</ul>` : '')
+    + (eats.length ? `<div class="group-head"><h2>Famous food &amp; cafés</h2></div><ul class="list famous-list">${eats.map((p, k) => famousCard(p, sights.length + k)).join('')}</ul>` : '')
+    + GROUPS.map(([label, re]) => {
+      const list = rest.filter((p) => re.test(p.kind)).slice(0, 6);
+      if (!list.length) return '';
+      return `<div class="group-head"><h2>${label}</h2></div><ul class="list poi-list">${list.map((p) => `<li data-n="${esc(p.name)}"><b>${esc(p.name)}</b>${p.nameEn && p.nameEn !== p.name ? ` <span class="hint">${esc(p.nameEn)}</span>` : ''}<small class="hint">${esc(p.cuisine || p.kind.replace(/_/g, ' '))}</small></li>`).join('')}</ul>`;
+    }).join('')
+    + (!all.length && !rest.length ? '<p class="hint">No places found nearby in OpenStreetMap.</p>' : '');
+  out.querySelectorAll('.famous').forEach((li) => li.addEventListener('click', (e) => { if (!e.target.closest('a')) onShow(all[+li.dataset.k]); }));
+  out.querySelectorAll('.poi-list li').forEach((li) => li.addEventListener('click', () => onShow(rest.find((p) => p.name === li.dataset.n))));
 }

@@ -10,7 +10,7 @@ export function createMap(container) {
   const map = new maplibregl.Map({
     container,
     style: 'https://tiles.openfreemap.org/styles/positron',
-    center: [127.0, 37.55],
+    center: [16.37, 48.21],
     zoom: 1.6,
     pitch: 0,
     maxPitch: 70,

@@ -33,11 +33,13 @@ export function rank(candidates, mode, slackMin = 15) {
   const by = {
     minimax: (a, b) => a.stats.max - b.stats.max || a.stats.sum - b.stats.sum,
     efficient: (a, b) => a.stats.sum - b.stats.sum || a.stats.max - b.stats.max,
-    equal: (a, b) => a.stats.spread - b.stats.spread || a.stats.sum - b.stats.sum,
+    // mostly "same time for everyone", but a little extra travel for all also counts against a place
+    equal: (a, b) => eq(a) - eq(b) || a.stats.sum - b.stats.sum,
   }[mode];
+  const eq = (c) => c.stats.spread + 0.5 * (c.stats.max - bestMax);
   let pool = ok;
   if (mode === 'equal') {
-    const limit = bestMax * 1.3 + slackMin;
+    const limit = bestMax * 1.25 + slackMin;
     pool = ok.filter((c) => c.stats.max <= limit);
   }
   return pool.slice().sort(by);

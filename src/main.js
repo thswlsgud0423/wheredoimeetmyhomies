@@ -8,18 +8,18 @@ import { createJourney, prepareLegs } from './map/journey.js';
 import { buildPlan } from './engine/plan.js';
 import { routeTree } from './engine/tree.js';
 import { MODES } from './engine/fairness.js';
-import { deps, nearbyPlaces, reverseName } from './data/load.js';
+import { deps, nearbyPlaces, famousPlaces, locate, reverseName } from './data/load.js';
 import { createSetup, SAMPLES, COLORS, esc } from './ui/setup.js';
 import { createResults, createPlans, renderIdeas, renderPoiFallback, placeTitle, seasonFor } from './ui/results.js';
 import { createPlayer } from './ui/player.js';
-import { fmtClock, fmtMinutes } from './geo.js';
+import { fmtClock, fmtMinutes, haversine } from './geo.js';
 
 const $ = (s) => document.querySelector(s);
 
 // ---------- state ----------
 const state = {
-  mode: 'minimax',
-  people: SAMPLES.seoul.people.map(([name, place, lng, lat], k) => ({ id: k, name, place, pos: [lng, lat], mode: 'transit', color: COLORS[k] })),
+  mode: 'equal',
+  people: SAMPLES.wien.people.map(([name, place, lng, lat], k) => ({ id: k, name, place, pos: [lng, lat], mode: 'transit', color: COLORS[k] })),
 };
 let plan = null;
 let markers = [];
@@ -167,15 +167,16 @@ async function find() {
 
   const chosen = {};
   for (const m of Object.keys(MODES)) chosen[m] = plan.ranked[m][0];
-  prefs = defaultPrefs(chosen.minimax?.pos ?? people[0].pos);
-  if (!chosen.minimax) {
+  const best = chosen[state.mode] || chosen.minimax;
+  prefs = defaultPrefs(best?.pos ?? people[0].pos);
+  if (!best) {
     toast('No place everyone can reach. Try a different way to travel.', 6000);
     showResults(chosen);
     return;
   }
 
   drawNetwork();
-  await exploreRoutes(my, chosen.minimax);
+  await exploreRoutes(my, best);
   if (my !== runId) return;
 
   showResults(chosen);
@@ -244,6 +245,67 @@ async function exploreRoutes(my, best) {
 }
 
 // ---------- 2. the meeting point ----------
+// Other places that are about as good: close in the ranking and in travel time, but not next door to each other.
+function similarOptions(mode) {
+  const ranked = plan.ranked[mode];
+  if (!ranked.length) return [];
+  const bestMax = ranked[0].stats.max;
+  const slack = { city: 8, region: 25, world: 120 }[plan.tier];
+  const gapKm = { city: 0.7, region: 20, world: 250 }[plan.tier];
+  const out = [];
+  for (const c of ranked) {
+    if (out.length >= 8) break;
+    if (c.stats.max > bestMax * 1.2 + slack) continue;
+    if (out.some((o) => haversine(o.pos, c.pos) / 1000 < gapKm)) continue;
+    out.push(c);
+  }
+  return out;
+}
+
+let optPins = [];
+function showOptions(current) {
+  const v = results.view;
+  const list = similarOptions(v.mode);
+  optPins.forEach((m) => m.remove());
+  optPins = [];
+  const bar = $('#options');
+  if (list.length < 2) { bar.hidden = true; return; }
+  const best = list[0];
+  list.forEach((c, k) => {
+    const el = document.createElement('div');
+    el.className = 'opt-pin' + (c.id === current.id ? ' on' : '');
+    el.style.animationDelay = `${k * 70}ms`;
+    el.innerHTML = `<b>${k + 1}</b>${fmtMinutes(c.stats.max)}`;
+    el.title = placeTitle(c);
+    el.addEventListener('click', (e) => { e.stopPropagation(); selectPlace(c); });
+    optPins.push(new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat(c.pos).addTo(map));
+  });
+  const diff = (c) => {
+    if (c === best) return 'top pick';
+    const d = Math.round(c.stats.max - best.stats.max);
+    return d === 0 ? 'same time' : d < 0 ? `${-d} min shorter` : `+${d} min`;
+  };
+  bar.innerHTML = `<div class="opt-bar">
+    <div class="opt-head"><b>${list.length} good options</b>similar travel times</div>
+    ${list.map((c, k) => `<button class="opt ${c.id === current.id ? 'on' : ''}" data-id="${esc(c.id)}">
+      <span class="opt-n">#${k + 1} · ${diff(c)}</span>
+      <span class="opt-name">${esc(placeTitle(c))}</span>
+      <small>${fmtMinutes(c.stats.max)} max · ±${fmtMinutes(c.stats.spread)}</small>
+    </button>`).join('')}
+  </div>`;
+  bar.hidden = false;
+  bar.onclick = (e) => {
+    const b = e.target.closest('.opt');
+    if (b) selectPlace(list.find((c) => c.id === b.dataset.id));
+  };
+  bar.querySelector('.opt.on')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+}
+function hideOptions() {
+  optPins.forEach((m) => m.remove());
+  optPins = [];
+  $('#options').hidden = true;
+}
+
 function paintCandidates(mode) {
   const ranked = plan.ranked[mode];
   const top = new Set(ranked.slice(0, 5).map((c) => c.id));
@@ -275,6 +337,8 @@ async function selectPlace(c, { first = false } = {}) {
   showTreeUntil(map, Infinity);
   treeOpacity(map, 0.35);
   paintCandidates(v.mode);
+  showOptions(c);
+  prefetchPlaces(c);
   drawRoutes(legs);
   clock(null);
   $('#panel').scrollTo({ top: 0, behavior: first ? 'auto' : 'smooth' });
@@ -308,6 +372,7 @@ async function playJourneys(sameArrival) {
   setStep('travel');
   setData(map, 'overlap', null);
   setData(map, 'cands', null);
+  optPins.forEach((m) => m.getElement().style.display = 'none');
   treeOpacity(map, 0.18);
   markers.forEach((m) => m.getElement().classList.add('faded'));
   journey = createJourney(map, plan.people, v.legs, { sameArrival });
@@ -349,6 +414,7 @@ function resetScene() {
   clearAll(map);
   emphasizeNetwork(map, false);
   pin?.remove(); pin = null;
+  hideOptions();
   plans.close();
   plansKey = '';
   clock(null);
@@ -386,10 +452,10 @@ async function askPlans(p) {
   const out = plans.out;
   const key = c.id + '|' + Date.now();
   plansKey = key;
-  out.innerHTML = '<div class="loading"><span></span>Looking around the meeting point…</div>';
-  const pois = await nearbyPlaces(c.pos, plan.tier === 'city' ? 700 : 2500);
+  out.innerHTML = '<div class="loading"><span></span>Looking for the famous spots around here…</div>';
+  const { pois, famous } = await prefetchPlaces(c);
   if (key !== plansKey) return;
-  out.innerHTML = `<div class="loading"><span></span>Found ${pois.length} places nearby. Writing plans…</div>`;
+  out.innerHTML = `<div class="loading"><span></span>Found ${famous.length} famous places nearby. Writing plans…</div>`;
   const body = {
     tier: plan.tier,
     place: { name: placeTitle(c), country: c.country || '', lng: c.pos[0], lat: c.pos[1] },
@@ -399,27 +465,54 @@ async function askPlans(p) {
       how: [...new Set((v.legs[i] || []).map((l) => l.mode))].join(' + ') || person.mode,
     })),
     prefs: { ...p, budget: p.budget.toLowerCase() },
-    pois: pois.slice(0, 80).map(({ name, nameEn, kind, cuisine }) => ({ name, nameEn, kind, cuisine })),
+    pois: pois.slice(0, 60).map(({ name, nameEn, kind, cuisine }) => ({ name, nameEn, kind, cuisine })),
+    famous: famous.slice(0, 40).map(({ name, nameEn, kind, desc }) => ({ name, nameEn, kind, desc })),
   };
-  const show = (poi) => {
+  const show = async (poi) => {
     if (!poi) return;
-    setData(map, 'pois', { type: 'FeatureCollection', features: [{ type: 'Feature', properties: { name: poi.name }, geometry: { type: 'Point', coordinates: [poi.lng, poi.lat] } }] });
-    map.flyTo({ center: [poi.lng, poi.lat], zoom: Math.max(map.getZoom(), 16), pitch: 55, duration: 1400, padding: pad() });
+    let pos = poi.lng != null ? [poi.lng, poi.lat] : null;
+    if (!pos && poi.query) {
+      toast(`Looking up <b>${esc(poi.name)}</b>…`, 2000);
+      const hit = (await locate(poi.query, c.pos, plan.tier === 'city' ? 15 : 60))
+        || (await locate(poi.query.replace(/\s*[(（].*$/, ''), c.pos, plan.tier === 'city' ? 15 : 60));
+      if (!hit) { toast(`Couldn't find <b>${esc(poi.name)}</b> on the map`, 2500); return; }
+      pos = hit.pos;
+    }
+    setData(map, 'pois', { type: 'FeatureCollection', features: [{ type: 'Feature', properties: { name: poi.nameEn || poi.name }, geometry: { type: 'Point', coordinates: pos } }] });
+    map.flyTo({ center: pos, zoom: Math.max(map.getZoom(), 16), pitch: 55, duration: 1400, padding: pad() });
   };
+  const places = [...famous, ...pois];
   try {
     const res = await fetch('/api/recommend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
     if (key !== plansKey) return;
     if (!res.ok) {
       const msg = data.error === 'no-key'
-        ? 'Personal plans need an Anthropic API key (ANTHROPIC_API_KEY in .env). For now, here are real places near the meeting point.'
-        : `Plans are unavailable right now (${data.error || res.status}). Here are real places near the meeting point.`;
-      renderPoiFallback(out, msg, pois, show);
-    } else renderIdeas(out, data, pois, show);
+        ? 'Add an Anthropic API key (ANTHROPIC_API_KEY in .env) for personal plans with famous food and local tips. For now, here are the best-known places nearby.'
+        : `Plans are unavailable right now (${data.error || res.status}). Here are the best-known places nearby.`;
+      renderPoiFallback(out, msg, famous, pois, show);
+    } else renderIdeas(out, data, places, show);
   } catch (err) {
     if (key !== plansKey) return;
-    renderPoiFallback(out, `Could not reach the plans service (${err.message}). Here are real places near the meeting point.`, pois, show);
+    renderPoiFallback(out, `Could not reach the plans service (${err.message}). Here are the best-known places nearby.`, famous, pois, show);
   }
+}
+
+// Start looking up places as soon as a spot is picked, so the list is ready when the trips end.
+const placeCache = new Map();
+function prefetchPlaces(c) {
+  if (!placeCache.has(c.id)) {
+    const city = plan.tier === 'city';
+    const p = Promise.all([
+      nearbyPlaces(c.pos, city ? 900 : 2500),
+      famousPlaces(c.pos, city ? 2500 : 6000),
+    ]).then(([pois, famous]) => {
+      if (!pois.length && !famous.length) placeCache.delete(c.id); // let a later try fetch again
+      return { pois, famous };
+    });
+    placeCache.set(c.id, p);
+  }
+  return placeCache.get(c.id);
 }
 
 // ---------- utils ----------

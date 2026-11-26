@@ -13,7 +13,7 @@ export const RAIL_SPEED_KMH = { subway: 34, light_rail: 30, monorail: 30, train:
 
 export function railQuery([w, s, e, n]) {
   const bb = `${s.toFixed(4)},${w.toFixed(4)},${n.toFixed(4)},${e.toFixed(4)}`;
-  return `[out:json][timeout:90];relation["route"~"^(subway|light_rail|train|monorail)$"](${bb});out body;(node(r:"stop");node(r:"stop_entry_only");node(r:"stop_exit_only");node(r:"platform"););out body;`;
+  return `[out:json][timeout:90];relation["route"~"^(subway|light_rail|train|monorail|tram)$"](${bb});out body;(node(r:"stop");node(r:"stop_entry_only");node(r:"stop_exit_only");node(r:"platform"););out body;`;
 }
 
 // Try each mirror in turn; public servers are often busy.

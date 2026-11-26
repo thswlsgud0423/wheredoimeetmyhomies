@@ -14,6 +14,7 @@ const Recommendations = z.object({
     category: z.enum(['food', 'drinks', 'cafe', 'sights', 'culture', 'nature', 'shopping', 'activity', 'nightlife', 'event', 'stay']),
     place_name: z.string(),
     from_list: z.boolean(),
+    badge: z.string(),
     why: z.string(),
     when: z.string(),
     cost: z.string(),
@@ -22,15 +23,20 @@ const Recommendations = z.object({
   tips: z.array(z.string()),
 });
 
-const SYSTEM = `You plan meetups for groups of friends who have just found a fair place to meet (each person travels a similar or reasonable time).
-You get the meeting place, who is coming and how long each trip takes, the group's preferences, and a list of real places near the meeting point taken from OpenStreetMap.
+const SYSTEM = `You are a well-traveled local friend planning a meetup for a group who just found a fair place to meet (each person travels a similar time).
+Recommend what people who know the place actually recommend: the famous must-sees and the legendary local spots, not random nearby businesses.
+For example, in Paris: the Louvre, Musée d'Orsay, Jardin du Luxembourg, a classic bistro. In Myeongdong: Myeongdong Kyoja (Michelin Bib Gourmand kalguksu), the street-food stalls in the evening, Namsan Seoul Tower. In Vienna: St. Stephen's Cathedral, Schönbrunn, Café Central or Café Sperl, Figlmüller for schnitzel, the Naschmarkt.
+
+You get the meeting place, who is coming and how long each trip takes, the group's preferences, a list of FAMOUS places near the meeting point (real places with a Wikipedia article, biggest first) and a list of other nearby places from OpenStreetMap.
 
 Rules:
-- Prefer places from the provided list. When you use one, copy its name exactly into place_name and set from_list to true.
-- You may suggest well-known things not in the list (set from_list to false), but never invent a specific business that you are not confident exists. Generic ideas ("a Korean BBQ place around the station") are fine.
-- Do not state exact opening hours, ticket prices or event dates as facts. Give rough cost levels like "$", "$$" or "about 15,000 KRW per person", and tell people to check details.
-- Fit the season, budget, vibe and notes. If someone travels much longer than the others, consider a later start or an easy first stop.
-- Give 5 to 7 picks, a day plan of 4 to 6 steps that starts when the last person arrives, and 2 to 4 practical tips.
+- Use your own knowledge of the area first: landmarks, museums, viewpoints, parks, signature food (the dish the area is known for and the famous place to eat it), Michelin-listed or long-standing institutions, well-loved markets, cafés and night spots.
+- Only name specific businesses you are confident exist and are well known. Put the real, searchable name in place_name (with the local-script name in brackets if it differs, e.g. "Myeongdong Kyoja (명동교자)"). Set from_list to true only when it is in one of the provided lists, copying that name exactly.
+- Stay near the meeting point: walking distance or a short ride for a spot inside a city, the city and its easy day trips otherwise.
+- Use "badge" for a short, true reason it is famous ("Michelin Bib Gourmand", "UNESCO World Heritage", "Since 1876", "Locals' favorite", "Signature dish: kalguksu"), or an empty string.
+- Do not state exact opening hours, ticket prices or event dates as facts. Give rough cost levels like "Free", "$", "$$" or "about 15,000 KRW per person".
+- Fit the season, budget, vibe and notes. If someone travels much longer than the others, start easy.
+- Give 6 to 8 picks, mixing must-see sights with famous food, a day plan of 4 to 6 steps that starts when the last person arrives, and 2 to 4 practical tips.
 - Write every text field in the requested language. Keep each "why" to one or two sentences.`;
 
 async function readJson(req) {
@@ -53,7 +59,7 @@ export async function recommendHandler(req, res) {
   try { input = await readJson(req); } catch { return send(res, 400, { error: 'Bad JSON' }); }
 
   client ??= new Anthropic();
-  const { place, people = [], prefs = {}, pois = [], tier } = input;
+  const { place, people = [], prefs = {}, pois = [], famous = [], tier } = input;
   const prompt = [
     `Meeting place: ${place?.name}${place?.country ? ', ' + place.country : ''} (${tier === 'city' ? 'a spot inside one city' : tier === 'region' ? 'a city between their home cities' : 'a city the friends travel to from different countries'}).`,
     `Coordinates: ${place?.lat?.toFixed?.(4)}, ${place?.lng?.toFixed?.(4)}`,
@@ -64,7 +70,10 @@ export async function recommendHandler(req, res) {
     `Notes from the group: ${prefs.notes || 'none'}`,
     `Answer language: ${prefs.lang || 'English'}`,
     '',
-    `Nearby places from OpenStreetMap (${pois.length}):`,
+    `Famous places nearby (${famous.length}):`,
+    ...famous.slice(0, 40).map((p) => `- ${p.name}${p.nameEn && p.nameEn !== p.name ? ` (${p.nameEn})` : ''} [${p.kind}]${p.desc ? ' – ' + p.desc : ''}`),
+    '',
+    `Other places nearby from OpenStreetMap (${pois.length}):`,
     ...pois.slice(0, 80).map((p) => `- ${p.name}${p.nameEn && p.nameEn !== p.name ? ` (${p.nameEn})` : ''} [${p.kind}${p.cuisine ? ', ' + p.cuisine : ''}]`),
   ].join('\n');
 

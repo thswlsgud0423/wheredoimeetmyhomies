@@ -33,6 +33,27 @@ test('fairness modes match the worked example', () => {
   assert.equal(rank(c2, 'equal')[0].id, 'X');
 });
 
+test('Vienna: U-Bahn/tram trips, central station winner', async () => {
+  const vienna = await json('../src/data/vienna-rail.json');
+  const people = [
+    person('Floridsdorf', 16.3977, 48.2566),
+    person('Favoriten', 16.3779, 48.1749),
+    person('Huetteldorf', 16.2614, 48.1973),
+    person('Seestadt', 16.5078, 48.2262),
+  ];
+  assert.equal(chooseTier(people), 'city');
+  const plan = await buildPlan(people, { ...deps, loadRail: async () => vienna.lines });
+  for (const m of ['equal', 'minimax', 'efficient']) {
+    const w = plan.ranked[m][0];
+    console.log(`  ${m.padEnd(9)} ${w.name} ${w.times.map((t) => t.toFixed(0)).join('/')} min`);
+    assert.equal(w.kind, 'station');
+    assert.ok(w.stats.max < 60, 'nobody should need an hour inside Vienna');
+  }
+  const legs = plan.journeyFor(plan.ranked.equal[0]);
+  console.log('  legs:', legs.map((ls) => ls.map((l) => l.mode + (l.line ? `(${l.line.ref || l.line.name})` : '')).join(' > ')).join(' | '));
+  assert.ok(legs.flat().some((l) => ['subway', 'train', 'tram'].includes(l.mode)));
+});
+
 test('Seoul: subway trips, station winner, sensible times', async () => {
   const people = [
     person('Gangnam', 127.0276, 37.4979),

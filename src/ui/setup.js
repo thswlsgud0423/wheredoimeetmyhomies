@@ -13,6 +13,15 @@ const TRAVEL = [
 ];
 
 export const SAMPLES = {
+  wien: {
+    label: 'Wien',
+    people: [
+      ['You', 'Floridsdorf', 16.3977, 48.2566],
+      ['Anna', 'Reumannplatz, Favoriten', 16.3779, 48.1749],
+      ['Lukas', 'Hütteldorf', 16.2614, 48.1973],
+      ['Sophie', 'Seestadt Aspern', 16.5078, 48.2262],
+    ],
+  },
   seoul: {
     label: 'Seoul',
     people: [

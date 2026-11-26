@@ -2,6 +2,7 @@
 import { along, sliceAlong, greatCircle, smooth } from '../geo.js';
 import { setData, maplibregl } from './scene.js';
 import { ICONS } from './icons.js';
+import { createToys } from './toys.js';
 
 export const MODE_ICON = ICONS;
 export const MODE_NAME = {
@@ -44,12 +45,17 @@ export function createJourney(map, people, legsPer, { sameArrival = false } = {}
     }))),
   });
 
+  const toys = createToys(map);
+  const handles = [];
   const markers = people.map((p) => {
     const el = document.createElement('div');
     el.className = 'traveler';
     el.style.setProperty('--c', p.color);
-    el.innerHTML = '<span class="traveler-icon"></span><span class="traveler-tag"></span>';
+    el.innerHTML = '<canvas class="toy"></canvas><span class="traveler-tag"></span>';
+    const canvas = el.querySelector('canvas');
+    canvas.width = canvas.height = toys.size;
     el.querySelector('.traveler-tag').textContent = p.name;
+    handles.push(toys.add(p.color, canvas));
     return new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat(p.pos).addTo(map);
   });
 
@@ -87,12 +93,13 @@ export function createJourney(map, people, legsPer, { sameArrival = false } = {}
       const m = markers[i];
       m.setLngLat(s.pos);
       const el = m.getElement();
-      const key = s.done ? 'done' : ICONS[s.mode] ? s.mode : 'walk';
-      const iconEl = el.querySelector('.traveler-icon');
-      if (iconEl.dataset.k !== key) { iconEl.dataset.k = key; iconEl.innerHTML = ICONS[key]; }
-      // planes point along their route (the icon faces north)
-      iconEl.firstChild.style.transform = s.mode === 'flight' ? `rotate(${(s.heading ?? 0) - map.getBearing()}deg)` : '';
+      const kind = s.done ? 'done' : s.mode === 'wait' ? 'wait' : MODE_NAME[s.mode] ? s.mode : 'walk';
+      handles[i].set({ kind, heading: s.heading, lineColor: s.leg?.line?.colour || '' });
       el.classList.toggle('done', s.done);
+      // friends who made it stand in a little circle around the pin instead of on top of each other
+      const a = (i / people.length) * Math.PI * 2 + 0.4;
+      m.setOffset(s.done ? [Math.cos(a) * 40, Math.sin(a) * 26 + 6] : [0, 0]);
+      el.classList.toggle('flying', kind === 'flight');
       for (const c of s.trail) if (c.length > 1) features.push({ type: 'Feature', properties: { color: p.color }, geometry: { type: 'LineString', coordinates: c } });
       return s;
     });
@@ -106,6 +113,7 @@ export function createJourney(map, people, legsPer, { sameArrival = false } = {}
     arrivals,
     render,
     destroy() {
+      toys.destroy();
       markers.forEach((m) => m.remove());
       setData(map, 'trail', null);
       setData(map, 'routes', null);
